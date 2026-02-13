@@ -12,6 +12,10 @@
 #include <spdlog/spdlog.h>
 #include "ship/utils/StringHelper.h"
 
+#ifdef __SWITCH__
+#include "ship/controller/controldevice/controller/mapping/switch/SwitchGyroMapping.h"
+#endif
+
 #define M_TAU 6.2831853071795864769252867665590057 // 2 * pi
 #define MINIMUM_RADIUS_TO_MAP_NOTCH 0.9
 
@@ -105,6 +109,15 @@ void Controller::AddDefaultMappings(PhysicalDeviceType physicalDeviceType) {
     GetRightStick()->AddDefaultMappings(physicalDeviceType);
     GetRumble()->AddDefaultMappings(physicalDeviceType);
 
+#ifdef __SWITCH__
+    // Switch homebrew: provide a usable gyro mapping out of the box.
+    // The in-game "Gyro aiming" toggle consumes Input.cur.gyro_x/gyro_y; without a mapping these remain 0.
+    if (physicalDeviceType == PhysicalDeviceType::SDLGamepad && GetGyro()->GetGyroMapping() == nullptr) {
+        auto gyroMapping = std::make_shared<SwitchGyroMapping>(mPortIndex, 1.0f, 0.0f, 0.0f, 0.0f);
+        GetGyro()->SetGyroMapping(gyroMapping);
+    }
+#endif
+
     const std::string hasConfigCvarKey =
         StringHelper::Sprintf(CVAR_PREFIX_CONTROLLERS ".Port%d.HasConfig", mPortIndex + 1);
     Ship::Context::GetInstance()->GetConsoleVariables()->SetInteger(hasConfigCvarKey.c_str(), true);
@@ -120,6 +133,15 @@ void Controller::ReloadAllMappingsFromConfig() {
     GetGyro()->ReloadGyroMappingFromConfig();
     GetRumble()->ReloadAllMappingsFromConfig();
     GetLED()->ReloadAllMappingsFromConfig();
+
+#ifdef __SWITCH__
+    // If an existing config is missing gyro mapping (or used SDLGyroMapping which isn't reliable on Switch),
+    // ensure we always have a Switch sixaxis mapping available.
+    if (GetGyro()->GetGyroMapping() == nullptr) {
+        auto gyroMapping = std::make_shared<SwitchGyroMapping>(mPortIndex, 1.0f, 0.0f, 0.0f, 0.0f);
+        GetGyro()->SetGyroMapping(gyroMapping);
+    }
+#endif
 }
 
 bool Controller::ProcessKeyboardEvent(KbEventType eventType, KbScancode scancode) {
