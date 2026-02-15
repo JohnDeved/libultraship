@@ -29,11 +29,9 @@ void Ship::Switch::Init(SwitchPhase phase) {
     switch (phase) {
         case PreInitPhase: {
             Result rc = socketInitializeDefault();
-// #ifdef DEBUG
             if (R_SUCCEEDED(rc)){
                 nxlinkStdio();
             }
-// #endif
             DetectAppletMode();
             break;
         }
