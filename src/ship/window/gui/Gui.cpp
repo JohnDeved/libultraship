@@ -308,6 +308,14 @@ void Gui::HandleWindowEvents(WindowEvent event) {
         case WindowBackend::FAST3D_SDL_METAL:
             ImGui_ImplSDL2_ProcessEvent(static_cast<const SDL_Event*>(event.Sdl.Event));
 #ifdef __SWITCH__
+            {
+                const SDL_Event* sdlEvent = static_cast<const SDL_Event*>(event.Sdl.Event);
+                if (sdlEvent != nullptr && sdlEvent->type == SDL_WINDOWEVENT &&
+                    (sdlEvent->window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
+                     sdlEvent->window.event == SDL_WINDOWEVENT_RESIZED)) {
+                    mImGuiDisplaySizeDirty = true;
+                }
+            }
             Ship::Switch::ImGuiProcessEvent(mImGuiIo->WantTextInput);
 #elif defined(__ANDROID__) || defined(__IOS__)
             Mobile::ImGuiProcessEvent(mImGuiIo->WantTextInput);
@@ -385,6 +393,20 @@ void Gui::ImGuiWMNewFrame() {
         case WindowBackend::FAST3D_SDL_OPENGL:
         case WindowBackend::FAST3D_SDL_METAL:
             ImGui_ImplSDL2_NewFrame();
+#ifdef __SWITCH__
+            {
+                // SDL_GetWindowSize() can report stale values on Switch across dock/undock.
+                // Prefer the actual display size from our Window backend.
+                const std::shared_ptr<Window> wnd = Context::GetInstance()->GetWindow();
+                const ImVec2 desiredSize((float)wnd->GetWidth(), (float)wnd->GetHeight());
+                if (mImGuiDisplaySizeDirty || mImGuiIo->DisplaySize.x != desiredSize.x ||
+                    mImGuiIo->DisplaySize.y != desiredSize.y) {
+                    mImGuiIo->DisplaySize = desiredSize;
+                    mImGuiIo->DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+                    mImGuiDisplaySizeDirty = false;
+                }
+            }
+#endif
             break;
 #ifdef ENABLE_DX11
         case WindowBackend::FAST3D_DXGI_DX11:
@@ -652,16 +674,6 @@ void Gui::StartFrame() {
     HandleMouseCapture();
     ImGuiBackendNewFrame();
     ImGuiWMNewFrame();
-#ifdef __SWITCH__
-    // ImGui's SDL backend may use SDL_GetWindowSize(), which can be stale across
-    // dock/undock cycles. Force the display size to match the current operation
-    // mode (via our Window backend) so menus always fit on screen.
-    {
-        const std::shared_ptr<Window> wnd = Context::GetInstance()->GetWindow();
-        mImGuiIo->DisplaySize = ImVec2((float)wnd->GetWidth(), (float)wnd->GetHeight());
-        mImGuiIo->DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
-    }
-#endif
     ImGui::NewFrame();
 }
 

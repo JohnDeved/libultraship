@@ -144,6 +144,10 @@ class Gui {
     std::unordered_map<std::string, GuiTextureMetadata> mGuiTextures;
     uint32_t mCursorVisibleTicks = 180;
     uint32_t mCursorVisibleSeconds = 3;
+
+#ifdef __SWITCH__
+    bool mImGuiDisplaySizeDirty = true;
+#endif
 };
 } // namespace Ship
 

@@ -16,7 +16,7 @@ std::shared_ptr<ControllerGyroMapping> GyroMappingFactory::CreateGyroMappingFrom
         StringHelper::Sprintf("%s.GyroMappingClass", mappingCvarKey.c_str()).c_str(), "");
 
     float sensitivity = Ship::Context::GetInstance()->GetConsoleVariables()->GetFloat(
-        StringHelper::Sprintf("%s.Sensitivity", mappingCvarKey.c_str()).c_str(), 1.0f);
+        StringHelper::Sprintf("%s.Sensitivity", mappingCvarKey.c_str()).c_str(), 2.0f);
     if (sensitivity < 0.0f || sensitivity > 1.0f) {
         // something about this mapping is invalid
         Ship::Context::GetInstance()->GetConsoleVariables()->ClearVariable(mappingCvarKey.c_str());
