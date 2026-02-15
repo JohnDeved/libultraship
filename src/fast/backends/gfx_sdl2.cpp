@@ -412,9 +412,15 @@ void GfxWindowBackendSDL2::Init(const char* gameName, const char* gfxApiName, bo
     if (use_opengl) {
         SDL_GL_GetDrawableSize(mWnd, &mWindowWidth, &mWindowHeight);
 
+#ifndef __SWITCH__
+        // On Switch the display mode is determined by docked/handheld state;
+        // calling SetFullscreenImpl here would invoke SDL_SetWindowDisplayMode
+        // with a stale resolution from the config (e.g. 1080p from a previous
+        // docked session), breaking handheld mode.
         if (startFullScreen) {
             SetFullscreenImpl(true, false);
         }
+#endif
 
         mCtx = SDL_GL_CreateContext(mWnd);
 
@@ -437,9 +443,11 @@ void GfxWindowBackendSDL2::Init(const char* gameName, const char* gfxApiName, bo
             return;
         }
 
+#ifndef __SWITCH__
         if (startFullScreen) {
             SetFullscreenImpl(true, false);
         }
+#endif
 
         SDL_GetRendererOutputSize(mRenderer, &mWindowWidth, &mWindowHeight);
         window_impl.Metal = { mWnd, mRenderer };
@@ -531,7 +539,9 @@ void GfxWindowBackendSDL2::SetMouseCallbacks(bool (*onMouseButtonDown)(int btn),
 }
 
 void GfxWindowBackendSDL2::GetDimensions(uint32_t* width, uint32_t* height, int32_t* posX, int32_t* posY) {
-#ifdef __APPLE__
+#ifdef __SWITCH__
+    Ship::Switch::GetDisplaySize(reinterpret_cast<int*>(width), reinterpret_cast<int*>(height));
+#elif __APPLE__
     SDL_GetWindowSize(mWnd, static_cast<int*>((void*)width), static_cast<int*>((void*)height));
 #else
     SDL_GL_GetDrawableSize(mWnd, static_cast<int*>((void*)width), static_cast<int*>((void*)height));

@@ -131,7 +131,14 @@ void Gui::Init(GuiWindowInitData windowImpl) {
 
     mImGuiIniPath = Context::GetPathRelativeToAppDirectory("imgui.ini");
     mImGuiLogPath = Context::GetPathRelativeToAppDirectory("imgui_log.txt");
+#ifdef __SWITCH__
+    // On Switch, don't persist ImGui layout. Saved dock/window positions from a
+    // different display mode (docked 1080p vs handheld 720p) cause layout
+    // problems on the next launch.
+    mImGuiIo->IniFilename = nullptr;
+#else
     mImGuiIo->IniFilename = mImGuiIniPath.c_str();
+#endif
     mImGuiIo->LogFilename = mImGuiLogPath.c_str();
 
     if (SupportsViewports() &&
@@ -645,6 +652,16 @@ void Gui::StartFrame() {
     HandleMouseCapture();
     ImGuiBackendNewFrame();
     ImGuiWMNewFrame();
+#ifdef __SWITCH__
+    // ImGui's SDL backend may use SDL_GetWindowSize(), which can be stale across
+    // dock/undock cycles. Force the display size to match the current operation
+    // mode (via our Window backend) so menus always fit on screen.
+    {
+        const std::shared_ptr<Window> wnd = Context::GetInstance()->GetWindow();
+        mImGuiIo->DisplaySize = ImVec2((float)wnd->GetWidth(), (float)wnd->GetHeight());
+        mImGuiIo->DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+    }
+#endif
     ImGui::NewFrame();
 }
 

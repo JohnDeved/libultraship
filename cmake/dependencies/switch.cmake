@@ -13,8 +13,12 @@ if (NOT ${nlohmann_json_FOUND})
 endif()
 
 #=================== tinyxml2 ===================
-find_package(tinyxml2 QUIET)
-if (NOT ${tinyxml2_FOUND})
+# Prefer config packages to get tinyxml2::tinyxml2 when available.
+find_package(tinyxml2 CONFIG QUIET)
+
+# We link against tinyxml2::tinyxml2; some environments may report FOUND but not
+# define that imported target.
+if (NOT TARGET tinyxml2::tinyxml2)
     set(tinyxml2_BUILD_TESTING OFF)
     FetchContent_Declare(
         tinyxml2
@@ -23,6 +27,11 @@ if (NOT ${tinyxml2_FOUND})
         OVERRIDE_FIND_PACKAGE
     )
     FetchContent_MakeAvailable(tinyxml2)
+endif()
+
+# If tinyxml2 was provided as a plain target, alias it to the namespaced one.
+if (TARGET tinyxml2 AND NOT TARGET tinyxml2::tinyxml2)
+    add_library(tinyxml2::tinyxml2 ALIAS tinyxml2)
 endif()
 
 #=================== spdlog ===================

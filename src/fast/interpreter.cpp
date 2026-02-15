@@ -4184,6 +4184,14 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
     mRapi = rapi;
     mWapi->Init(game_name, rapi->GetName(), start_in_fullscreen, width, height, posX, posY);
     mRapi->Init();
+
+    // Query the actual window dimensions from the backend after init.
+    // On Switch the backend overrides the requested size to match the current
+    // display mode (docked 1080p vs handheld 720p), so the config-persisted
+    // values passed in may be stale.
+    int32_t actualPosX, actualPosY;
+    mWapi->GetDimensions(&width, &height, &actualPosX, &actualPosY);
+
     mRapi->UpdateFramebufferParameters(0, width, height, 1, false, true, true, true);
     mCurDimensions.internal_mul =
         Ship::Context::GetInstance()->GetConsoleVariables()->GetFloat(CVAR_INTERNAL_RESOLUTION, 1);
