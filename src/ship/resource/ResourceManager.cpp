@@ -9,6 +9,10 @@
 #include "ship/config/ConsoleVariable.h"
 #include "ship/Context.h"
 
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
+
 namespace Ship {
 
 ResourceFilter::ResourceFilter(const std::list<std::string>& includeMasks, const std::list<std::string>& excludeMasks,
@@ -62,7 +66,16 @@ void ResourceManager::Init(const std::vector<std::string>& archivePaths,
     // the extra `- 1` is because we reserve an extra thread for spdlog
     size_t threadCount = std::max(1, (int32_t)(std::thread::hardware_concurrency() - reservedThreadCount - 1));
 #endif
+#if defined(__SWITCH__)
+    // Pin resource-loader threads to cores 1 & 2, keeping them off the
+    // main/render core (0).  The OS schedules freely across both cores;
+    // preferred_core = -1 means no single preferred core.
+    mThreadPool = std::make_shared<BS::thread_pool>(threadCount, []() {
+        svcSetThreadCoreMask(CUR_THREAD_HANDLE, -1, (1U << 1) | (1U << 2));
+    });
+#else
     mThreadPool = std::make_shared<BS::thread_pool>(threadCount);
+#endif
 
     if (!IsLoaded()) {
         // Nothing ever unpauses the thread pool since nothing will ever try to load the archive again.
