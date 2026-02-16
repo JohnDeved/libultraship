@@ -364,4 +364,4 @@ extern/nlohmann-json/*_jsonConfig*
 *.pbxproj
 *.xcworkspace
 *.xcsettings
-build*
+build*_codeql_detected_source_root

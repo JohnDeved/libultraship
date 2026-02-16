@@ -62,13 +62,25 @@ void GfxRenderingAPIOGL::SetUniforms(ShaderProgram* prg) const {
 void GfxRenderingAPIOGL::SetPerDrawUniforms() {
     if (mCurrentShaderProgram->usedTextures[0] || mCurrentShaderProgram->usedTextures[1]) {
         GLint filtering[2] = { textures[mCurrentTextureIds[0]].filtering, textures[mCurrentTextureIds[1]].filtering };
-        glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
+        if (filtering[0] != mLastPerDrawFiltering[0] || filtering[1] != mLastPerDrawFiltering[1]) {
+            glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
+            mLastPerDrawFiltering[0] = filtering[0];
+            mLastPerDrawFiltering[1] = filtering[1];
+        }
 
         GLint width[2] = { textures[mCurrentTextureIds[0]].width, textures[mCurrentTextureIds[1]].width };
-        glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
+        if (width[0] != mLastPerDrawWidth[0] || width[1] != mLastPerDrawWidth[1]) {
+            glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
+            mLastPerDrawWidth[0] = width[0];
+            mLastPerDrawWidth[1] = width[1];
+        }
 
         GLint height[2] = { textures[mCurrentTextureIds[0]].height, textures[mCurrentTextureIds[1]].height };
-        glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
+        if (height[0] != mLastPerDrawHeight[0] || height[1] != mLastPerDrawHeight[1]) {
+            glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
+            mLastPerDrawHeight[0] = height[0];
+            mLastPerDrawHeight[1] = height[1];
+        }
     }
 }
 
@@ -86,6 +98,10 @@ void GfxRenderingAPIOGL::LoadShader(ShaderProgram* new_prg) {
     glUseProgram(new_prg->openglProgramId);
     VertexArraySetAttribs(new_prg);
     SetUniforms(new_prg);
+    // Invalidate per-draw uniform cache when switching shaders, since uniform locations change.
+    mLastPerDrawFiltering[0] = mLastPerDrawFiltering[1] = -1;
+    mLastPerDrawWidth[0] = mLastPerDrawWidth[1] = -1;
+    mLastPerDrawHeight[0] = mLastPerDrawHeight[1] = -1;
 }
 
 #define RAND_NOISE "((random(vec3(floor(gl_FragCoord.xy * noise_scale), float(frame_count))) + 1.0) / 2.0)"
@@ -659,7 +675,7 @@ void GfxRenderingAPIOGL::Init() {
     glGenBuffers(1, &mOpenglVbo);
     glBindBuffer(GL_ARRAY_BUFFER, mOpenglVbo);
 
-#if defined(__APPLE__) || defined(USE_OPENGLES)
+#if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
     glGenVertexArrays(1, &mOpenglVao);
     glBindVertexArray(mOpenglVao);
 #endif

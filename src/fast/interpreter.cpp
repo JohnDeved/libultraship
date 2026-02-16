@@ -1051,21 +1051,48 @@ void Interpreter::TransposedMatrixMul(float res[3], const float a[3], const floa
 
 void Interpreter::MatrixMul(float res[4][4], const float a[4][4], const float b[4][4]) {
     float tmp[4][4];
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    const float32x4_t b0 = vld1q_f32(b[0]);
+    const float32x4_t b1 = vld1q_f32(b[1]);
+    const float32x4_t b2 = vld1q_f32(b[2]);
+    const float32x4_t b3 = vld1q_f32(b[3]);
+    for (int i = 0; i < 4; i++) {
+        float32x4_t r = vmulq_n_f32(b0, a[i][0]);
+        r = vmlaq_n_f32(r, b1, a[i][1]);
+        r = vmlaq_n_f32(r, b2, a[i][2]);
+        r = vmlaq_n_f32(r, b3, a[i][3]);
+        vst1q_f32(tmp[i], r);
+    }
+#else
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
             tmp[i][j] = a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j] + a[i][3] * b[3][j];
         }
     }
+#endif
     memcpy(res, tmp, sizeof(tmp));
 }
 
 void Interpreter::UpdateMpMatrixTranspose() {
     // Cache transpose so GfxSpVertex can do contiguous loads for dot products.
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    float32x4_t r0 = vld1q_f32(mRsp->MP_matrix[0]);
+    float32x4_t r1 = vld1q_f32(mRsp->MP_matrix[1]);
+    float32x4_t r2 = vld1q_f32(mRsp->MP_matrix[2]);
+    float32x4_t r3 = vld1q_f32(mRsp->MP_matrix[3]);
+    float32x4x2_t t0 = vtrnq_f32(r0, r1);
+    float32x4x2_t t1 = vtrnq_f32(r2, r3);
+    vst1q_f32(mMpMatrixTranspose[0], vcombine_f32(vget_low_f32(t0.val[0]), vget_low_f32(t1.val[0])));
+    vst1q_f32(mMpMatrixTranspose[1], vcombine_f32(vget_low_f32(t0.val[1]), vget_low_f32(t1.val[1])));
+    vst1q_f32(mMpMatrixTranspose[2], vcombine_f32(vget_high_f32(t0.val[0]), vget_high_f32(t1.val[0])));
+    vst1q_f32(mMpMatrixTranspose[3], vcombine_f32(vget_high_f32(t0.val[1]), vget_high_f32(t1.val[1])));
+#else
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
             mMpMatrixTranspose[j][i] = mRsp->MP_matrix[i][j];
         }
     }
+#endif
     mMpMatrixTransposeValid = true;
 }
 

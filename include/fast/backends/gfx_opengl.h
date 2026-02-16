@@ -113,7 +113,7 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     ShaderProgram* mCurrentShaderProgram;
 
     GLuint mOpenglVbo = 0;
-#if defined(__APPLE__) || defined(USE_OPENGLES)
+#if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
     GLuint mOpenglVao;
 #endif
 
@@ -128,6 +128,11 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     GLuint mPixelDepthRb = 0;
     GLuint mPixelDepthFb = 0;
     size_t mPixelDepthRbSize = 0;
+
+    // Dirty-flag tracking for per-draw uniforms to skip redundant glUniform calls.
+    GLint mLastPerDrawFiltering[2] = { -1, -1 };
+    GLint mLastPerDrawWidth[2] = { -1, -1 };
+    GLint mLastPerDrawHeight[2] = { -1, -1 };
 };
 
 } // namespace Fast
