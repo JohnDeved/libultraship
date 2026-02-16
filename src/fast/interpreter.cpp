@@ -1946,9 +1946,12 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     // with multiplications in the hot VBO fill loop.
     float inv_tex_width[2], inv_tex_height[2];
     for (int t = 0; t < 2; t++) {
-        if (usedTextures[t]) {
+        if (usedTextures[t] && tex_width[t] != 0 && tex_height[t] != 0) {
             inv_tex_width[t] = 1.0f / tex_width[t];
             inv_tex_height[t] = 1.0f / tex_height[t];
+        } else {
+            inv_tex_width[t] = 0.0f;
+            inv_tex_height[t] = 0.0f;
         }
     }
 
