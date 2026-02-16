@@ -1352,7 +1352,7 @@ void Interpreter::UpdateMpMatrixTranspose() {
 }
 
 void Interpreter::CalculateNormalDir(const F3DLight_t* light, float coeffs[3]) {
-    float light_dir[3] = { light->dir[0] / 127.0f, light->dir[1] / 127.0f, light->dir[2] / 127.0f };
+    float light_dir[3] = { light->dir[0] * (1.0f / 127.0f), light->dir[1] * (1.0f / 127.0f), light->dir[2] * (1.0f / 127.0f) };
 
     Interpreter::TransposedMatrixMul(coeffs, light_dir,
                                      mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1]);
@@ -1558,8 +1558,9 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
 
                     // Calculate intensity for each axis using standard formula for intensity
                     float light_intensity[3];
+                    float inv_dist_sq = 1.0f / dist_sq;
                     for (int light_i = 0; light_i < 3; light_i++) {
-                        light_intensity[light_i] = 4.0f * light_model[light_i] / dist_sq;
+                        light_intensity[light_i] = 4.0f * light_model[light_i] * inv_dist_sq;
                         light_intensity[light_i] = std::clamp(light_intensity[light_i], -1.0f, 1.0f);
                     }
 
@@ -1574,15 +1575,15 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                     // https://github.com/gonetz/GLideN64/blob/3b43a13a80dfc2eb6357673440b335e54eaa3896/src/gSP.cpp#L636
                     float distf = floorf(dist);
                     float attenuation = (distf * mRsp->current_lights[i].p.unk7 * 2.0f +
-                                         distf * distf * mRsp->current_lights[i].p.unkE / 8.0f) /
-                                            (float)0xFFFF +
+                                         distf * distf * mRsp->current_lights[i].p.unkE * 0.125f) *
+                                            (1.0f / 65535.0f) +
                                         1.0f;
                     intensity = total_intensity / attenuation;
                 } else {
                     intensity += vn->n[0] * mRsp->current_lights_coeffs[i][0];
                     intensity += vn->n[1] * mRsp->current_lights_coeffs[i][1];
                     intensity += vn->n[2] * mRsp->current_lights_coeffs[i][2];
-                    intensity /= 127.0f;
+                    intensity *= (1.0f / 127.0f);
                 }
                 if (intensity > 0.0f) {
                     r += intensity * mRsp->current_lights[i].l.col[0];
@@ -1604,8 +1605,8 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                 doty += vn->n[1] * mRsp->current_lookat_coeffs[1][1];
                 doty += vn->n[2] * mRsp->current_lookat_coeffs[1][2];
 
-                dotx /= 127.0f;
-                doty /= 127.0f;
+                dotx *= (1.0f / 127.0f);
+                doty *= (1.0f / 127.0f);
 
                 dotx = Ship::Math::clamp(dotx, -1.0f, 1.0f);
                 doty = Ship::Math::clamp(doty, -1.0f, 1.0f);
@@ -1619,8 +1620,8 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                     dotx = acosf(-dotx) /* M_PI */ * 0.159155f;
                     doty = acosf(-doty) /* M_PI */ * 0.159155f;
                 } else {
-                    dotx = (dotx + 1.0f) / 4.0f;
-                    doty = (doty + 1.0f) / 4.0f;
+                    dotx = (dotx + 1.0f) * 0.25f;
+                    doty = (doty + 1.0f) * 0.25f;
                 }
 
                 U = (int32_t)(dotx * mRsp->texture_scaling_factor.s);
@@ -1697,10 +1698,13 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     const uint32_t cull_back = get_attr(CULL_BACK);
 
     if ((mRsp->geometry_mode & cull_both) != 0) {
-        float dx1 = v1->x / (v1->w) - v2->x / (v2->w);
-        float dy1 = v1->y / (v1->w) - v2->y / (v2->w);
-        float dx2 = v3->x / (v3->w) - v2->x / (v2->w);
-        float dy2 = v3->y / (v3->w) - v2->y / (v2->w);
+        float inv_w1 = 1.0f / v1->w;
+        float inv_w2 = 1.0f / v2->w;
+        float inv_w3 = 1.0f / v3->w;
+        float dx1 = v1->x * inv_w1 - v2->x * inv_w2;
+        float dy1 = v1->y * inv_w1 - v2->y * inv_w2;
+        float dx2 = v3->x * inv_w3 - v2->x * inv_w2;
+        float dy2 = v3->y * inv_w3 - v2->y * inv_w2;
         float cross = dx1 * dy2 - dy1 * dx2;
 
         if ((v1->w < 0) ^ (v2->w < 0) ^ (v3->w < 0)) {
