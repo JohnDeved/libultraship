@@ -1377,8 +1377,8 @@ void Interpreter::GfxSpMatrix(uint8_t parameters, const int32_t* addr) {
             for (int j = 0; j < 4; j += 2) {
                 int32_t int_part = addr[i * 2 + j / 2];
                 uint32_t frac_part = addr[8 + i * 2 + j / 2];
-                matrix[i][j] = (int32_t)((int_part & 0xffff0000) | (frac_part >> 16)) / 65536.0f;
-                matrix[i][j + 1] = (int32_t)((int_part << 16) | (frac_part & 0xffff)) / 65536.0f;
+                matrix[i][j] = (int32_t)((int_part & 0xffff0000) | (frac_part >> 16)) * (1.0f / 65536.0f);
+                matrix[i][j + 1] = (int32_t)((int_part << 16) | (frac_part & 0xffff)) * (1.0f / 65536.0f);
             }
         }
 #else
@@ -1612,13 +1612,22 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                 doty = Ship::Math::clamp(doty, -1.0f, 1.0f);
 
                 if (mRsp->geometry_mode & G_TEXTURE_GEN_LINEAR) {
-                    // Not sure exactly what formula we should use to get accurate values
-                    /*dotx = (2.906921f * dotx * dotx + 1.36114f) * dotx;
-                    doty = (2.906921f * doty * doty + 1.36114f) * doty;
-                    dotx = (dotx + 1.0f) / 4.0f;
-                    doty = (doty + 1.0f) / 4.0f;*/
-                    dotx = acosf(-dotx) /* M_PI */ * 0.159155f;
-                    doty = acosf(-doty) /* M_PI */ * 0.159155f;
+                    // Fast polynomial approximation of acos(-x)/(2π).
+                    // Abramowitz & Stegun-style: acos(a) ≈ sqrt(1-a)*(a0 + a1*a + a2*a² + a3*a³)
+                    // Max error <0.005 — sufficient for N64 texture generation coordinates.
+                    auto fast_acos_over_2pi = [](float x) -> float {
+                        // Compute acos(-x)/(2π) for x in [-1,1], result in [0,0.5]
+                        float nx = -x;
+                        float abs_nx = nx < 0.0f ? -nx : nx;
+                        float s = 1.0f - abs_nx;
+                        float sq = sqrtf(s);
+                        // Polynomial coefficients for acos(a) ≈ sqrt(1-a) * P(a)
+                        float r = ((-0.0501743f * abs_nx + 0.0889789f) * abs_nx - 0.2145988f) * abs_nx + 1.5707963f;
+                        r *= sq * 0.159154943f; // * 1/(2π)
+                        return nx < 0.0f ? 0.5f - r : r;
+                    };
+                    dotx = fast_acos_over_2pi(dotx);
+                    doty = fast_acos_over_2pi(doty);
                 } else {
                     dotx = (dotx + 1.0f) * 0.25f;
                     doty = (doty + 1.0f) * 0.25f;
@@ -2072,7 +2081,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                     case G_CCMUX_LOD_FRACTION: {
                         if (mRdp->other_mode_l & G_TL_LOD) {
                             // "Hack" that works for Bowser - Peach painting
-                            float distance_frac = (v1->w - 3000.0f) / 3000.0f;
+                            float distance_frac = (v1->w - 3000.0f) * (1.0f / 3000.0f);
                             if (distance_frac < 0.0f) {
                                 distance_frac = 0.0f;
                             }
@@ -2167,10 +2176,10 @@ void Interpreter::AdjustVIewportOrScissor(XYWidthHeight* area) {
 
 void Interpreter::CalcAndSetViewport(const F3DVp_t* viewport) {
     // 2 bits fraction
-    float width = 2.0f * viewport->vscale[0] / 4.0f;
-    float height = 2.0f * viewport->vscale[1] / 4.0f;
-    float x = (viewport->vtrans[0] / 4.0f) - width / 2.0f;
-    float y = ((viewport->vtrans[1] / 4.0f) + height / 2.0f);
+    float width = 2.0f * viewport->vscale[0] * 0.25f;
+    float height = 2.0f * viewport->vscale[1] * 0.25f;
+    float x = (viewport->vtrans[0] * 0.25f) - width * 0.5f;
+    float y = ((viewport->vtrans[1] * 0.25f) + height * 0.5f);
 
     mRdp->viewport.x = x;
     mRdp->viewport.y = y;
