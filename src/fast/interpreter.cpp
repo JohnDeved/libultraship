@@ -594,15 +594,36 @@ void Interpreter::ImportTextureIA8(int tile, bool importReplacement) {
     uint32_t lineSizeBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes;
     SUPPORT_CHECK(fullImageLineSizeBytes == lineSizeBytes);
 
-    for (uint32_t i = 0; i < sizeBytes; i++) {
+    uint32_t i = 0;
+
+#if defined(__ARM_NEON)
+    // Process 16 bytes at a time: each byte → 4 output bytes (R=G=B=intensity*0x11, A=alpha*0x11).
+    const uint8x16_t mask_lo = vdupq_n_u8(0x0f);
+    const uint8x16_t scale = vdupq_n_u8(0x11);
+    for (; i + 16 <= sizeBytes; i += 16) {
+        uint8x16_t src = vld1q_u8(addr + i);
+        uint8x16_t hi = vshrq_n_u8(src, 4);            // intensity nibble
+        uint8x16_t lo = vandq_u8(src, mask_lo);         // alpha nibble
+        uint8x16_t intensity = vmulq_u8(hi, scale);     // SCALE_4_8
+        uint8x16_t alpha = vmulq_u8(lo, scale);         // SCALE_4_8
+        // Interleave: for each pixel we need [intensity, intensity, intensity, alpha].
+        // Build two channels at a time using zip operations.
+        uint8x16x4_t rgba;
+        rgba.val[0] = intensity;
+        rgba.val[1] = intensity;
+        rgba.val[2] = intensity;
+        rgba.val[3] = alpha;
+        vst4q_u8(mTexUploadBuffer + 4 * i, rgba);
+    }
+#endif
+
+    // Scalar tail
+    for (; i < sizeBytes; i++) {
         uint8_t intensity = addr[i] >> 4;
         uint8_t alpha = addr[i] & 0xf;
-        uint8_t r = intensity;
-        uint8_t g = intensity;
-        uint8_t b = intensity;
-        mTexUploadBuffer[4 * i + 0] = SCALE_4_8(r);
-        mTexUploadBuffer[4 * i + 1] = SCALE_4_8(g);
-        mTexUploadBuffer[4 * i + 2] = SCALE_4_8(b);
+        mTexUploadBuffer[4 * i + 0] = SCALE_4_8(intensity);
+        mTexUploadBuffer[4 * i + 1] = SCALE_4_8(intensity);
+        mTexUploadBuffer[4 * i + 2] = SCALE_4_8(intensity);
         mTexUploadBuffer[4 * i + 3] = SCALE_4_8(alpha);
     }
 
@@ -709,7 +730,23 @@ void Interpreter::ImportTextureI8(int tile, bool importReplacement) {
         mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].full_image_line_size_bytes;
     uint32_t line_size_bytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes;
 
-    for (uint32_t i = 0; i < sizeBytes; i++) {
+    uint32_t i = 0;
+
+#if defined(__ARM_NEON)
+    // Process 16 pixels at a time: each input byte becomes 4 identical output bytes (RGBA).
+    for (; i + 16 <= sizeBytes; i += 16) {
+        uint8x16_t src = vld1q_u8(addr + i);
+        uint8x16x4_t rgba;
+        rgba.val[0] = src;  // R
+        rgba.val[1] = src;  // G
+        rgba.val[2] = src;  // B
+        rgba.val[3] = src;  // A
+        vst4q_u8(mTexUploadBuffer + 4 * i, rgba);
+    }
+#endif
+
+    // Scalar tail
+    for (; i < sizeBytes; i++) {
         uint8_t intensity = addr[i];
         mTexUploadBuffer[4 * i + 0] = intensity;
         mTexUploadBuffer[4 * i + 1] = intensity;
@@ -1243,10 +1280,20 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
 #if defined(__ARM_NEON) && defined(__aarch64__)
         if (mMpMatrixTransposeValid) {
             const float32x4_t vec = { (float)v->ob[0], (float)v->ob[1], (float)v->ob[2], 1.0f };
-            x = vaddvq_f32(vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[0])));
-            y = vaddvq_f32(vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[1])));
-            z = vaddvq_f32(vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[2])));
-            w = vaddvq_f32(vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[3])));
+            // Use vadd+vpadd horizontal reduction (ARMv8.0-A compatible).
+            // vaddvq_f32 requires ARMv8.1-A which the Switch Cortex-A57 lacks.
+            float32x4_t px = vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[0]));
+            float32x4_t py = vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[1]));
+            float32x4_t pz = vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[2]));
+            float32x4_t pw = vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[3]));
+            float32x2_t sx = vadd_f32(vget_low_f32(px), vget_high_f32(px));
+            float32x2_t sy = vadd_f32(vget_low_f32(py), vget_high_f32(py));
+            float32x2_t sz = vadd_f32(vget_low_f32(pz), vget_high_f32(pz));
+            float32x2_t sw = vadd_f32(vget_low_f32(pw), vget_high_f32(pw));
+            x = vget_lane_f32(vpadd_f32(sx, sx), 0);
+            y = vget_lane_f32(vpadd_f32(sy, sy), 0);
+            z = vget_lane_f32(vpadd_f32(sz, sz), 0);
+            w = vget_lane_f32(vpadd_f32(sw, sw), 0);
         } else
 #endif
         {
@@ -1299,7 +1346,16 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                     float dist_sq =
                         dist_vec[0] * dist_vec[0] + dist_vec[1] * dist_vec[1] +
                         dist_vec[2] * dist_vec[2] * 2; // The *2 comes from GLideN64, unsure of why it does it
-                    float dist = sqrt(dist_sq);
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                    // Fast approximate sqrt via NEON reciprocal-sqrt estimate + Newton-Raphson refinement.
+                    // dist is only used for floorf(dist) in attenuation; single-precision accuracy suffices.
+                    float32x2_t vds = vdup_n_f32(dist_sq);
+                    float32x2_t est = vrsqrte_f32(vds);
+                    est = vmul_f32(est, vrsqrts_f32(vmul_f32(est, est), vds)); // one NR step
+                    float dist = vget_lane_f32(vmul_f32(vds, est), 0);         // dist_sq * rsqrt(dist_sq)
+#else
+                    float dist = sqrtf(dist_sq);
+#endif
 
                     // Transform distance vector (which acts as a direction light vector) into model's space
                     float light_model[3];
