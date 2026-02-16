@@ -953,14 +953,16 @@ void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
     // Pre-expand the 256-entry RGBA5551 palette into RGBA8888 lookup table.
     // This converts each palette entry once instead of per-pixel.
     uint32_t lut[256];
-    for (int idx = 0; idx < 256; idx++) {
-        uint16_t col16 = (mRdp->palettes[idx / 128][(idx % 128) * 2] << 8) |
-                         mRdp->palettes[idx / 128][(idx % 128) * 2 + 1];
-        uint8_t a = col16 & 1;
-        uint8_t r = col16 >> 11;
-        uint8_t g = (col16 >> 6) & 0x1f;
-        uint8_t b = (col16 >> 1) & 0x1f;
-        lut[idx] = SCALE_5_8(r) | (SCALE_5_8(g) << 8) | (SCALE_5_8(b) << 16) | ((a ? 255u : 0u) << 24);
+    for (int bank = 0; bank < 2; bank++) {
+        const uint8_t* pal = mRdp->palettes[bank];
+        for (int entry = 0; entry < 128; entry++) {
+            uint16_t col16 = (pal[entry * 2] << 8) | pal[entry * 2 + 1];
+            uint8_t a = col16 & 1;
+            uint8_t r = col16 >> 11;
+            uint8_t g = (col16 >> 6) & 0x1f;
+            uint8_t b = (col16 >> 1) & 0x1f;
+            lut[bank * 128 + entry] = SCALE_5_8(r) | (SCALE_5_8(g) << 8) | (SCALE_5_8(b) << 16) | ((a ? 255u : 0u) << 24);
+        }
     }
 
     uint32_t* dst = reinterpret_cast<uint32_t*>(mTexUploadBuffer);
