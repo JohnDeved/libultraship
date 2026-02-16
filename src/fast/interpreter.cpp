@@ -1068,9 +1068,11 @@ void Interpreter::TransposedMatrixMul(float res[3], const float a[3], const floa
     // res[i] = dot(a, b[i][:3]) — dot product of a with each row's first 3 elements.
     // Zero the 4th lane so the unused b[i][3] column doesn't affect the sum.
     float32x4_t va = { a[0], a[1], a[2], 0.0f };
-    res[0] = vaddvq_f32(vmulq_f32(va, vld1q_f32(b[0])));
-    res[1] = vaddvq_f32(vmulq_f32(va, vld1q_f32(b[1])));
-    res[2] = vaddvq_f32(vmulq_f32(va, vld1q_f32(b[2])));
+    for (int i = 0; i < 3; i++) {
+        float32x4_t product = vmulq_f32(va, vld1q_f32(b[i]));
+        float32x2_t tmp = vadd_f32(vget_low_f32(product), vget_high_f32(product));
+        res[i] = vget_lane_f32(vpadd_f32(tmp, tmp), 0);
+    }
 #else
     res[0] = a[0] * b[0][0] + a[1] * b[0][1] + a[2] * b[0][2];
     res[1] = a[0] * b[1][0] + a[1] * b[1][1] + a[2] * b[1][2];
