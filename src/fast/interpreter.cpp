@@ -1669,12 +1669,9 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
         d->z = z;
         d->w = w;
 
-        if (mRsp->geometry_mode & G_FOG) {
-            // Fog factor is now computed in the vertex shader from z/w + uniforms
-            d->color.a = v->cn[3];
-        } else {
-            d->color.a = v->cn[3];
-        }
+        // Fog factor is computed in the vertex shader from z/w + uniforms.
+        // Always use the original vertex alpha here.
+        d->color.a = v->cn[3];
     }
 }
 
