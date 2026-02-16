@@ -28,14 +28,6 @@ struct Vertex {
             @end
         @end
     @end
-    @if(o_fog)
-        float4 fog [[attribute(@{get_vertex_index()})]];
-        @{update_floats(4)}
-    @end
-    @if(o_grayscale)
-        float4 grayscale [[attribute(@{get_vertex_index()})]];
-        @{update_floats(4)}
-    @end
     @for(i in 0..o_inputs)
         @if(o_alpha)
             float4 input@{i + 1} [[attribute(@{get_vertex_index()})]];
@@ -62,12 +54,6 @@ struct ProjectedVertex {
             @end
         @end
     @end
-    @if(o_fog)
-        float4 fog;
-    @end
-    @if(o_grayscale)
-        float4 grayscale;
-    @end
     @for(i in 0..o_inputs)
         @if(o_alpha)
             float4 input@{i + 1};
@@ -93,12 +79,6 @@ vertex ProjectedVertex vertexShader(Vertex in [[stage_in]]) {
                 @end
             @end
         @end
-    @end
-    @if(o_fog)
-        out.fog = in.fog;
-    @end
-    @if(o_grayscale)
-        out.grayscale = in.grayscale;
     @end
     @for(i in 0..o_inputs)
          out.input@{i + 1} = in.input@{i + 1};
@@ -251,19 +231,9 @@ fragment float4 fragmentShader(ProjectedVertex in [[stage_in]], constant FrameUn
     texel = clamp(texel, 0.0, 1.0);
     // TODO discard if alpha is 0?
 
-    @if(o_fog)
-        @if(o_alpha)
-            texel = float4(mix(texel.xyz, in.fog.xyz, in.fog.w), texel.w);
-        @else
-            texel = mix(texel, in.fog.xyz, in.fog.w);
-        @end
-    @end
-
-    @if(o_grayscale)
-        float intensity = (texel.x + texel.y + texel.z) / 3.0;
-        float3 new_texel = in.grayscale.xyz * intensity;
-        texel.xyz = mix(texel.xyz, new_texel, in.grayscale.w);
-    @end
+    // TODO: Fog/grayscale on Metal requires buffer support for uniforms.
+    // For now, fog and grayscale are disabled on Metal.
+    // These effects work correctly on the OpenGL backend (including Switch).
 
     @if(o_alpha && o_noise)
         float2 coords = screenSpace.xy * noise_scale;
