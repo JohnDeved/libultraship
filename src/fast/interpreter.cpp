@@ -1614,7 +1614,7 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                 if (mRsp->geometry_mode & G_TEXTURE_GEN_LINEAR) {
                     // Fast polynomial approximation of acos(-x)/(2π).
                     // Abramowitz & Stegun-style: acos(a) ≈ sqrt(1-a)*(a0 + a1*a + a2*a² + a3*a³)
-                    // Max error <0.005 — sufficient for N64 texture generation coordinates.
+                    // Max error <0.001 — sufficient for N64 texture generation coordinates.
                     auto fast_acos_over_2pi = [](float x) -> float {
                         // Compute acos(-x)/(2π) for x in [-1,1], result in [0,0.5]
                         float nx = -x;
