@@ -976,7 +976,66 @@ void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
     }
 
     uint32_t* dst = reinterpret_cast<uint32_t*>(mTexUploadBuffer);
-    for (uint32_t i = 0; i < sizeBytes; i++) {
+    uint32_t i = 0;
+
+#if defined(__ARM_NEON)
+    // Build 16-entry per-channel tables so each nibble can be looked up via vqtbl.
+    uint8_t lutR[16];
+    uint8_t lutG[16];
+    uint8_t lutB[16];
+    uint8_t lutA[16];
+    for (int idx = 0; idx < 16; idx++) {
+        lutR[idx] = lut[idx] & 0xFF;
+        lutG[idx] = (lut[idx] >> 8) & 0xFF;
+        lutB[idx] = (lut[idx] >> 16) & 0xFF;
+        lutA[idx] = (lut[idx] >> 24) & 0xFF;
+    }
+
+    const uint8x16_t rTable = vld1q_u8(lutR);
+    const uint8x16_t gTable = vld1q_u8(lutG);
+    const uint8x16_t bTable = vld1q_u8(lutB);
+    const uint8x16_t aTable = vld1q_u8(lutA);
+    const uint8x16_t nibbleMask = vdupq_n_u8(0x0F);
+
+    // 16 CI4 bytes => 32 RGBA pixels.
+    for (; i + 16 <= sizeBytes; i += 16) {
+        const uint8x16_t packed = vld1q_u8(addr + i);
+        const uint8x16_t hi = vshrq_n_u8(packed, 4);
+        const uint8x16_t lo = vandq_u8(packed, nibbleMask);
+
+        const uint8x16_t rHi = vqtbl1q_u8(rTable, hi);
+        const uint8x16_t rLo = vqtbl1q_u8(rTable, lo);
+        const uint8x16_t gHi = vqtbl1q_u8(gTable, hi);
+        const uint8x16_t gLo = vqtbl1q_u8(gTable, lo);
+        const uint8x16_t bHi = vqtbl1q_u8(bTable, hi);
+        const uint8x16_t bLo = vqtbl1q_u8(bTable, lo);
+        const uint8x16_t aHi = vqtbl1q_u8(aTable, hi);
+        const uint8x16_t aLo = vqtbl1q_u8(aTable, lo);
+
+        const uint8x16x2_t rPairs = vzipq_u8(rHi, rLo);
+        const uint8x16x2_t gPairs = vzipq_u8(gHi, gLo);
+        const uint8x16x2_t bPairs = vzipq_u8(bHi, bLo);
+        const uint8x16x2_t aPairs = vzipq_u8(aHi, aLo);
+
+        uint8x16x4_t rgba0;
+        rgba0.val[0] = rPairs.val[0];
+        rgba0.val[1] = gPairs.val[0];
+        rgba0.val[2] = bPairs.val[0];
+        rgba0.val[3] = aPairs.val[0];
+
+        uint8x16x4_t rgba1;
+        rgba1.val[0] = rPairs.val[1];
+        rgba1.val[1] = gPairs.val[1];
+        rgba1.val[2] = bPairs.val[1];
+        rgba1.val[3] = aPairs.val[1];
+
+        const uint32_t outPixel = i * 2;
+        vst4q_u8(mTexUploadBuffer + outPixel * 4, rgba0);
+        vst4q_u8(mTexUploadBuffer + (outPixel + 16) * 4, rgba1);
+    }
+#endif
+
+    for (; i < sizeBytes; i++) {
         uint8_t byte = addr[i];
         dst[i * 2 + 0] = lut[byte >> 4];
         dst[i * 2 + 1] = lut[byte & 0xf];
