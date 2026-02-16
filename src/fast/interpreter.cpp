@@ -1379,19 +1379,8 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
         d->w = w;
 
         if (mRsp->geometry_mode & G_FOG) {
-            if (fabsf(w) < 0.001f) {
-                // To avoid division by zero
-                w = 0.001f;
-            }
-
-            float winv = 1.0f / w;
-            if (winv < 0.0f) {
-                winv = std::numeric_limits<int16_t>::max();
-            }
-
-            float fog_z = z * winv * mRsp->fog_mul + mRsp->fog_offset;
-            fog_z = Ship::Math::clamp(fog_z, 0.0f, 255.0f);
-            d->color.a = fog_z; // Use alpha variable to store fog factor
+            // Fog factor is now computed in the vertex shader from z/w + uniforms
+            d->color.a = v->cn[3];
         } else {
             d->color.a = v->cn[3];
         }
@@ -1672,6 +1661,24 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
     struct GfxClipParameters clip_parameters = mRapi->GetClipParameters();
 
+    if (use_fog) {
+        mRapi->SetFogParams(
+            mRdp->fog_color.r / 255.0f,
+            mRdp->fog_color.g / 255.0f,
+            mRdp->fog_color.b / 255.0f,
+            (float)mRsp->fog_mul,
+            (float)mRsp->fog_offset
+        );
+    }
+    if (use_grayscale) {
+        mRapi->SetGrayscaleColor(
+            mRdp->grayscale_color.r / 255.0f,
+            mRdp->grayscale_color.g / 255.0f,
+            mRdp->grayscale_color.b / 255.0f,
+            mRdp->grayscale_color.a / 255.0f
+        );
+    }
+
     for (int i = 0; i < 3; i++) {
         float z = v_arr[i]->z, w = v_arr[i]->w;
         if (clip_parameters.z_is_from_0_to_1) {
@@ -1731,20 +1738,6 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             if (clampT) {
                 mBufVbo[mBufVboLen++] = (tex_height2[t] - 0.5f) / tex_height[t];
             }
-        }
-
-        if (use_fog) {
-            mBufVbo[mBufVboLen++] = mRdp->fog_color.r / 255.0f;
-            mBufVbo[mBufVboLen++] = mRdp->fog_color.g / 255.0f;
-            mBufVbo[mBufVboLen++] = mRdp->fog_color.b / 255.0f;
-            mBufVbo[mBufVboLen++] = v_arr[i]->color.a / 255.0f; // fog factor (not alpha)
-        }
-
-        if (use_grayscale) {
-            mBufVbo[mBufVboLen++] = mRdp->grayscale_color.r / 255.0f;
-            mBufVbo[mBufVboLen++] = mRdp->grayscale_color.g / 255.0f;
-            mBufVbo[mBufVboLen++] = mRdp->grayscale_color.b / 255.0f;
-            mBufVbo[mBufVboLen++] = mRdp->grayscale_color.a / 255.0f; // lerp interpolation factor (not alpha)
         }
 
         for (int j = 0; j < numInputs; j++) {
@@ -1939,6 +1932,9 @@ void Interpreter::GfxSpMovewordF3dex2(uint8_t index, uint16_t offset, uintptr_t 
             mRsp->lights_changed = true;
             break;
         case G_MW_FOG:
+            if (mRsp->fog_mul != (int16_t)(data >> 16) || mRsp->fog_offset != (int16_t)data) {
+                Flush();
+            }
             mRsp->fog_mul = (int16_t)(data >> 16);
             mRsp->fog_offset = (int16_t)data;
             break;
@@ -1965,6 +1961,9 @@ void Interpreter::GfxSpMovewordF3d(uint8_t index, uint16_t offset, uintptr_t dat
             mRsp->lights_changed = true;
             break;
         case G_MW_FOG:
+            if (mRsp->fog_mul != (int16_t)(data >> 16) || mRsp->fog_offset != (int16_t)data) {
+                Flush();
+            }
             mRsp->fog_mul = (int16_t)(data >> 16);
             mRsp->fog_offset = (int16_t)data;
             break;
@@ -2251,6 +2250,10 @@ static inline uint32_t alpha_comb(uint32_t a, uint32_t b, uint32_t c, uint32_t d
 }
 
 void Interpreter::GfxDpSetGrayscaleColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    if (mRdp->grayscale_color.r != r || mRdp->grayscale_color.g != g || mRdp->grayscale_color.b != b ||
+        mRdp->grayscale_color.a != a) {
+        Flush();
+    }
     mRdp->grayscale_color.r = r;
     mRdp->grayscale_color.g = g;
     mRdp->grayscale_color.b = b;
@@ -2273,6 +2276,9 @@ void Interpreter::GfxDpSetPrimColor(uint8_t m, uint8_t l, uint8_t r, uint8_t g, 
 }
 
 void Interpreter::GfxDpSetFogColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    if (mRdp->fog_color.r != r || mRdp->fog_color.g != g || mRdp->fog_color.b != b || mRdp->fog_color.a != a) {
+        Flush();
+    }
     mRdp->fog_color.r = r;
     mRdp->fog_color.g = g;
     mRdp->fog_color.b = b;

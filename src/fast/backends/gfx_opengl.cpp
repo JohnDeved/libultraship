@@ -102,6 +102,10 @@ void GfxRenderingAPIOGL::LoadShader(ShaderProgram* new_prg) {
     mLastPerDrawFiltering[0] = mLastPerDrawFiltering[1] = -1;
     mLastPerDrawWidth[0] = mLastPerDrawWidth[1] = -1;
     mLastPerDrawHeight[0] = mLastPerDrawHeight[1] = -1;
+    mLastFogColor[0] = mLastFogColor[1] = mLastFogColor[2] = -1.0f;
+    mLastFogMul = -99999.0f;
+    mLastFogOffset = -99999.0f;
+    mLastGrayscaleColor[0] = mLastGrayscaleColor[1] = mLastGrayscaleColor[2] = mLastGrayscaleColor[3] = -1.0f;
 }
 
 #define RAND_NOISE "((random(vec3(floor(gl_FragCoord.xy * noise_scale), float(frame_count))) + 1.0) / 2.0)"
@@ -456,18 +460,6 @@ ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, u
         }
     }
 
-    if (cc_features.opt_fog) {
-        prg->attribLocations[cnt] = glGetAttribLocation(shader_program, "aFog");
-        prg->attribSizes[cnt] = 4;
-        ++cnt;
-    }
-
-    if (cc_features.opt_grayscale) {
-        prg->attribLocations[cnt] = glGetAttribLocation(shader_program, "aGrayscaleColor");
-        prg->attribSizes[cnt] = 4;
-        ++cnt;
-    }
-
     for (int i = 0; i < cc_features.numInputs; i++) {
         char name[16];
         sprintf(name, "aInput%d", i + 1);
@@ -492,6 +484,13 @@ ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, u
     prg->texture_width_location = glGetUniformLocation(shader_program, "texture_width");
     prg->texture_height_location = glGetUniformLocation(shader_program, "texture_height");
     prg->texture_filtering_location = glGetUniformLocation(shader_program, "texture_filtering");
+
+    prg->fog_color_location = glGetUniformLocation(shader_program, "uFogColor");
+    prg->fog_mul_location = glGetUniformLocation(shader_program, "uFogMul");
+    prg->fog_offset_location = glGetUniformLocation(shader_program, "uFogOffset");
+    prg->grayscale_color_location = glGetUniformLocation(shader_program, "uGrayscaleColor");
+    prg->hasFog = cc_features.opt_fog;
+    prg->hasGrayscale = cc_features.opt_grayscale;
 
     LoadShader(prg);
 
@@ -1005,6 +1004,40 @@ void GfxRenderingAPIOGL::SetSrgbMode() {
 
 ImTextureID GfxRenderingAPIOGL::GetTextureById(int id) {
     return reinterpret_cast<ImTextureID>(id);
+}
+
+void GfxRenderingAPIOGL::SetFogParams(float r, float g, float b, float mul, float offset) {
+    if (mCurrentShaderProgram && mCurrentShaderProgram->hasFog) {
+        if (r != mLastFogColor[0] || g != mLastFogColor[1] || b != mLastFogColor[2]) {
+            float color[3] = { r, g, b };
+            glUniform3fv(mCurrentShaderProgram->fog_color_location, 1, color);
+            mLastFogColor[0] = r;
+            mLastFogColor[1] = g;
+            mLastFogColor[2] = b;
+        }
+        if (mul != mLastFogMul) {
+            glUniform1f(mCurrentShaderProgram->fog_mul_location, mul);
+            mLastFogMul = mul;
+        }
+        if (offset != mLastFogOffset) {
+            glUniform1f(mCurrentShaderProgram->fog_offset_location, offset);
+            mLastFogOffset = offset;
+        }
+    }
+}
+
+void GfxRenderingAPIOGL::SetGrayscaleColor(float r, float g, float b, float a) {
+    if (mCurrentShaderProgram && mCurrentShaderProgram->hasGrayscale) {
+        if (r != mLastGrayscaleColor[0] || g != mLastGrayscaleColor[1] ||
+            b != mLastGrayscaleColor[2] || a != mLastGrayscaleColor[3]) {
+            float color[4] = { r, g, b, a };
+            glUniform4fv(mCurrentShaderProgram->grayscale_color_location, 1, color);
+            mLastGrayscaleColor[0] = r;
+            mLastGrayscaleColor[1] = g;
+            mLastGrayscaleColor[2] = b;
+            mLastGrayscaleColor[3] = a;
+        }
+    }
 }
 } // namespace Fast
 #endif

@@ -87,6 +87,8 @@ class GfxRenderingAPIDX11 final : public GfxRenderingAPI {
     void SetScissor(int x, int y, int width, int height) override;
     void SetUseAlpha(bool useAlpha) override;
     void DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) override;
+    void SetFogParams(float r, float g, float b, float mul, float offset) override;
+    void SetGrayscaleColor(float r, float g, float b, float a) override;
     void Init() override;
     void OnResize() override;
     void StartFrame() override;

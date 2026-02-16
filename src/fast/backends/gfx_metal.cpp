@@ -412,6 +412,12 @@ void GfxRenderingAPIMetal::SetUseAlpha(bool use_alpha) {
     // Already part of the pipeline state from shader info
 }
 
+void GfxRenderingAPIMetal::SetFogParams(float r, float g, float b, float mul, float offset) {
+}
+
+void GfxRenderingAPIMetal::SetGrayscaleColor(float r, float g, float b, float a) {
+}
+
 void GfxRenderingAPIMetal::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     NS::AutoreleasePool* autorelease_pool = NS::AutoreleasePool::alloc()->init();
 

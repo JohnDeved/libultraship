@@ -38,6 +38,12 @@ struct ShaderProgram {
     GLint texture_width_location;
     GLint texture_height_location;
     GLint texture_filtering_location;
+    GLint fog_color_location;
+    GLint fog_mul_location;
+    GLint fog_offset_location;
+    GLint grayscale_color_location;
+    bool hasFog;
+    bool hasGrayscale;
 };
 
 struct FramebufferOGL {
@@ -70,6 +76,8 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     void SetScissor(int x, int y, int width, int height) override;
     void SetUseAlpha(bool useAlpha) override;
     void DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) override;
+    void SetFogParams(float r, float g, float b, float mul, float offset) override;
+    void SetGrayscaleColor(float r, float g, float b, float a) override;
     void Init() override;
     void OnResize() override;
     void StartFrame() override;
@@ -133,6 +141,12 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     GLint mLastPerDrawFiltering[2] = { -1, -1 };
     GLint mLastPerDrawWidth[2] = { -1, -1 };
     GLint mLastPerDrawHeight[2] = { -1, -1 };
+
+    // Fog/grayscale uniform dirty tracking
+    float mLastFogColor[3] = { -1.0f, -1.0f, -1.0f };
+    float mLastFogMul = -99999.0f;
+    float mLastFogOffset = -99999.0f;
+    float mLastGrayscaleColor[4] = { -1.0f, -1.0f, -1.0f, -1.0f };
 };
 
 } // namespace Fast
