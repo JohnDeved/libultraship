@@ -1104,11 +1104,10 @@ void Interpreter::TransposedMatrixMul(float res[3], const float a[3], const floa
 #if defined(__ARM_NEON) && defined(__aarch64__)
     // res[i] = dot(a, b[i][:3]) — dot product of a with each row's first 3 elements.
     // Zero the 4th lane so the unused b[i][3] column doesn't affect the sum.
+    // vaddvq_f32 is available on all AArch64 targets (lowers to FADDP).
     float32x4_t va = { a[0], a[1], a[2], 0.0f };
     for (int i = 0; i < 3; i++) {
-        float32x4_t product = vmulq_f32(va, vld1q_f32(b[i]));
-        float32x2_t tmp = vadd_f32(vget_low_f32(product), vget_high_f32(product));
-        res[i] = vget_lane_f32(vpadd_f32(tmp, tmp), 0);
+        res[i] = vaddvq_f32(vmulq_f32(va, vld1q_f32(b[i])));
     }
 #else
     res[0] = a[0] * b[0][0] + a[1] * b[0][1] + a[2] * b[0][2];
@@ -1280,20 +1279,12 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
 #if defined(__ARM_NEON) && defined(__aarch64__)
         if (mMpMatrixTransposeValid) {
             const float32x4_t vec = { (float)v->ob[0], (float)v->ob[1], (float)v->ob[2], 1.0f };
-            // Use vadd+vpadd horizontal reduction (ARMv8.0-A compatible).
-            // vaddvq_f32 requires ARMv8.1-A which the Switch Cortex-A57 lacks.
-            float32x4_t px = vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[0]));
-            float32x4_t py = vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[1]));
-            float32x4_t pz = vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[2]));
-            float32x4_t pw = vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[3]));
-            float32x2_t sx = vadd_f32(vget_low_f32(px), vget_high_f32(px));
-            float32x2_t sy = vadd_f32(vget_low_f32(py), vget_high_f32(py));
-            float32x2_t sz = vadd_f32(vget_low_f32(pz), vget_high_f32(pz));
-            float32x2_t sw = vadd_f32(vget_low_f32(pw), vget_high_f32(pw));
-            x = vget_lane_f32(vpadd_f32(sx, sx), 0);
-            y = vget_lane_f32(vpadd_f32(sy, sy), 0);
-            z = vget_lane_f32(vpadd_f32(sz, sz), 0);
-            w = vget_lane_f32(vpadd_f32(sw, sw), 0);
+            // vaddvq_f32 is available on all AArch64 targets (lowers to FADDP),
+            // including ARMv8.0-A cores like the Switch's Cortex-A57.
+            x = vaddvq_f32(vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[0])));
+            y = vaddvq_f32(vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[1])));
+            z = vaddvq_f32(vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[2])));
+            w = vaddvq_f32(vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[3])));
         } else
 #endif
         {
