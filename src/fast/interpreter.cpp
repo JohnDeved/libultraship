@@ -17,6 +17,10 @@
 #include <stack>
 #include "fast/resource/type/Light.h"
 
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
+
 #ifndef _LANGUAGE_C
 #define _LANGUAGE_C
 #endif
@@ -110,6 +114,7 @@ Interpreter::Interpreter() {
     mRsp = new RSP();
     mRdp = new RDP();
     mBufVbo = new float[MAX_TRI_BUFFER * (32 * 3)];
+    mMpMatrixTransposeValid = false;
 }
 
 Interpreter::~Interpreter() {
@@ -1054,6 +1059,16 @@ void Interpreter::MatrixMul(float res[4][4], const float a[4][4], const float b[
     memcpy(res, tmp, sizeof(tmp));
 }
 
+void Interpreter::UpdateMpMatrixTranspose() {
+    // Cache transpose so GfxSpVertex can do contiguous loads for dot products.
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            mMpMatrixTranspose[j][i] = mRsp->MP_matrix[i][j];
+        }
+    }
+    mMpMatrixTransposeValid = true;
+}
+
 void Interpreter::CalculateNormalDir(const F3DLight_t* light, float coeffs[3]) {
     float light_dir[3] = { light->dir[0] / 127.0f, light->dir[1] / 127.0f, light->dir[2] / 127.0f };
 
@@ -1117,6 +1132,7 @@ void Interpreter::GfxSpMatrix(uint8_t parameters, const int32_t* addr) {
         mRsp->lights_changed = 1;
     }
     MatrixMul(mRsp->MP_matrix, mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1], mRsp->P_matrix);
+    UpdateMpMatrixTranspose();
 }
 
 void Interpreter::GfxSpPopMatrix(uint32_t count) {
@@ -1126,6 +1142,7 @@ void Interpreter::GfxSpPopMatrix(uint32_t count) {
             if (mRsp->modelview_matrix_stack_size > 0) {
                 MatrixMul(mRsp->MP_matrix, mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1],
                           mRsp->P_matrix);
+                UpdateMpMatrixTranspose();
             }
         }
     }
@@ -1164,14 +1181,26 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
             return;
         }
 
-        float x = v->ob[0] * mRsp->MP_matrix[0][0] + v->ob[1] * mRsp->MP_matrix[1][0] +
-                  v->ob[2] * mRsp->MP_matrix[2][0] + mRsp->MP_matrix[3][0];
-        float y = v->ob[0] * mRsp->MP_matrix[0][1] + v->ob[1] * mRsp->MP_matrix[1][1] +
-                  v->ob[2] * mRsp->MP_matrix[2][1] + mRsp->MP_matrix[3][1];
-        float z = v->ob[0] * mRsp->MP_matrix[0][2] + v->ob[1] * mRsp->MP_matrix[1][2] +
-                  v->ob[2] * mRsp->MP_matrix[2][2] + mRsp->MP_matrix[3][2];
-        float w = v->ob[0] * mRsp->MP_matrix[0][3] + v->ob[1] * mRsp->MP_matrix[1][3] +
-                  v->ob[2] * mRsp->MP_matrix[2][3] + mRsp->MP_matrix[3][3];
+        float x, y, z, w;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        if (mMpMatrixTransposeValid) {
+            const float32x4_t vec = { (float)v->ob[0], (float)v->ob[1], (float)v->ob[2], 1.0f };
+            x = vaddvq_f32(vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[0])));
+            y = vaddvq_f32(vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[1])));
+            z = vaddvq_f32(vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[2])));
+            w = vaddvq_f32(vmulq_f32(vec, vld1q_f32(mMpMatrixTranspose[3])));
+        } else
+#endif
+        {
+            x = v->ob[0] * mRsp->MP_matrix[0][0] + v->ob[1] * mRsp->MP_matrix[1][0] + v->ob[2] * mRsp->MP_matrix[2][0] +
+                mRsp->MP_matrix[3][0];
+            y = v->ob[0] * mRsp->MP_matrix[0][1] + v->ob[1] * mRsp->MP_matrix[1][1] + v->ob[2] * mRsp->MP_matrix[2][1] +
+                mRsp->MP_matrix[3][1];
+            z = v->ob[0] * mRsp->MP_matrix[0][2] + v->ob[1] * mRsp->MP_matrix[1][2] + v->ob[2] * mRsp->MP_matrix[2][2] +
+                mRsp->MP_matrix[3][2];
+            w = v->ob[0] * mRsp->MP_matrix[0][3] + v->ob[1] * mRsp->MP_matrix[1][3] + v->ob[2] * mRsp->MP_matrix[2][3] +
+                mRsp->MP_matrix[3][3];
+        }
 
         float world_pos[3] = { 0.0 };
         if (mRsp->geometry_mode & G_LIGHTING_POSITIONAL) {

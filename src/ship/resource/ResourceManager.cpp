@@ -51,7 +51,13 @@ void ResourceManager::Init(const std::vector<std::string>& archivePaths,
     mArchiveManager = std::make_shared<ArchiveManager>();
     GetArchiveManager()->Init(archivePaths, validHashes);
 #if defined(__SWITCH__)
-    size_t threadCount = 1;
+    // Switch has limited CPU/thread budget, but a single loader thread makes scene/asset loads noticeably slower.
+    // Default to 2 (good throughput without starving the main thread), and clamp to a conservative maximum.
+    int32_t configuredThreadCount = 2;
+    if (auto cvars = Ship::Context::GetInstance()->GetConsoleVariables(); cvars != nullptr) {
+        configuredThreadCount = cvars->GetInteger(CVAR_RESOURCE_THREAD_COUNT, configuredThreadCount);
+    }
+    size_t threadCount = (size_t)std::clamp(configuredThreadCount, 1, 3);
 #else
     // the extra `- 1` is because we reserve an extra thread for spdlog
     size_t threadCount = std::max(1, (int32_t)(std::thread::hardware_concurrency() - reservedThreadCount - 1));

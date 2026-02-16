@@ -471,6 +471,8 @@ class Interpreter {
     static void TransposedMatrixMul(float res[3], const float a[3], const float b[4][4]);
     static void MatrixMul(float res[4][4], const float a[4][4], const float b[4][4]);
 
+    void UpdateMpMatrixTranspose();
+
     RSP* mRsp;
     RDP* mRdp;
     RenderingState mRenderingState{};
@@ -517,6 +519,12 @@ class Interpreter {
     std::vector<std::string> shader_ids;
     int mInterpolationIndex;
     int mInterpolationIndexTarget;
+
+    // Cached transpose of mRsp->MP_matrix.
+    // GfxSpVertex's hot path uses MP_matrix in a transposed access pattern; keeping a transposed copy
+    // avoids strided loads and enables efficient NEON dot products on Switch.
+    float mMpMatrixTranspose[4][4]{};
+    bool mMpMatrixTransposeValid{};
 };
 
 void gfx_set_target_ucode(UcodeHandlers ucode);
