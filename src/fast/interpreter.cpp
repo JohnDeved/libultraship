@@ -1379,16 +1379,14 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
         if (mRsp->geometry_mode & G_LIGHTING_POSITIONAL) {
             float(*mtx)[4] = mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1];
 #if defined(__ARM_NEON) && defined(__aarch64__)
-            // Vectorized world-position transform: world_pos[i] = ob·mtx_col[i] + mtx[3][i]
-            const float32x4_t ob = { (float)v->ob[0], (float)v->ob[1], (float)v->ob[2], 1.0f };
+            // Vectorized world-position transform: world_pos[j] = ob·mtx_col[j] + mtx[3][j]
             const float32x4_t m0 = vld1q_f32(mtx[0]);
             const float32x4_t m1 = vld1q_f32(mtx[1]);
             const float32x4_t m2 = vld1q_f32(mtx[2]);
             const float32x4_t m3 = vld1q_f32(mtx[3]);
-            // Compute row-by-column: result[j] = ob[0]*mtx[0][j] + ob[1]*mtx[1][j] + ob[2]*mtx[2][j] + mtx[3][j]
-            float32x4_t res = vmulq_n_f32(m0, vgetq_lane_f32(ob, 0));
-            res = vmlaq_n_f32(res, m1, vgetq_lane_f32(ob, 1));
-            res = vmlaq_n_f32(res, m2, vgetq_lane_f32(ob, 2));
+            float32x4_t res = vmulq_n_f32(m0, (float)v->ob[0]);
+            res = vmlaq_n_f32(res, m1, (float)v->ob[1]);
+            res = vmlaq_n_f32(res, m2, (float)v->ob[2]);
             res = vaddq_f32(res, m3);
             world_pos[0] = vgetq_lane_f32(res, 0);
             world_pos[1] = vgetq_lane_f32(res, 1);
