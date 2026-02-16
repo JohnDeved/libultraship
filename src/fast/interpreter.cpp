@@ -950,12 +950,9 @@ void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
     uint32_t lineSizeBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes;
     uint32_t palIdx = mRdp->texture_tile[tile].palette; // 0-15
 
-    const uint8_t* palette;
-
-    if (palIdx > 7)
-        palette = mRdp->palettes[palIdx / 8]; // 16 pixel entries, 16 bits each
-    else
-        palette = mRdp->palettes[palIdx / 8] + (palIdx % 8) * 16 * 2;
+    // Each bank holds 128 entries (8 sub-palettes of 16 entries, 2 bytes each).
+    // palIdx / 8 selects the bank, palIdx % 8 selects the sub-palette within the bank.
+    const uint8_t* palette = mRdp->palettes[palIdx / 8] + (palIdx % 8) * 16 * 2;
 
     SUPPORT_CHECK(fullImageLineSizeBytes == lineSizeBytes);
 
