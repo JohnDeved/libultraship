@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <cstddef>
 
 #include <unordered_map>
 #include <set>
@@ -16,16 +17,27 @@ struct GfxClipParameters {
 
 enum FilteringMode { FILTER_THREE_POINT, FILTER_LINEAR, FILTER_NONE };
 
-// A hash function used to hash a: pair<float, float>
-struct hash_pair_ff {
-    size_t operator()(const std::pair<float, float>& p) const {
-        const auto hash1 = std::hash<float>{}(p.first);
-        const auto hash2 = std::hash<float>{}(p.second);
+struct DepthCoord {
+    int32_t x;
+    int32_t y;
 
-        // If hash1 == hash2, their XOR is zero.
-        return (hash1 != hash2) ? hash1 ^ hash2 : hash1;
+    bool operator==(const DepthCoord&) const noexcept = default;
+
+    bool operator<(const DepthCoord& other) const noexcept {
+        return x < other.x || (x == other.x && y < other.y);
     }
 };
+
+struct depth_coord_hash {
+    size_t operator()(const DepthCoord& coord) const noexcept {
+        size_t h = std::hash<int32_t>{}(coord.x);
+        h ^= std::hash<int32_t>{}(coord.y) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+        return h;
+    }
+};
+
+using DepthCoordSet = std::set<DepthCoord>;
+using DepthCoordMap = std::unordered_map<DepthCoord, uint16_t, depth_coord_hash>;
 
 class GfxRenderingAPI {
   public:
@@ -65,8 +77,7 @@ class GfxRenderingAPI {
     virtual void ClearFramebuffer(bool color, bool depth) = 0;
     virtual void ReadFramebufferToCPU(int fbId, uint32_t width, uint32_t height, uint16_t* rgba16Buf) = 0;
     virtual void ResolveMSAAColorBuffer(int fbIdTarger, int fbIdSrc) = 0;
-    virtual std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
-    GetPixelDepth(int fb_id, const std::set<std::pair<float, float>>& coordinates) = 0;
+    virtual DepthCoordMap GetPixelDepth(int fb_id, const DepthCoordSet& coordinates) = 0;
     virtual void* GetFramebufferTextureId(int fbId) = 0;
     virtual void SelectTextureFb(int fbId) = 0;
     virtual void DeleteTexture(uint32_t texId) = 0;

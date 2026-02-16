@@ -114,12 +114,20 @@ static std::string GetPathWithoutFileName(char* filePath) {
     return filePath;
 }
 
+#if defined(__SWITCH__)
+constexpr size_t MAX_TRI_BUFFER = 1024;
+#else
 constexpr size_t MAX_TRI_BUFFER = 256;
+#endif
 
 Interpreter::Interpreter() {
     mRsp = new RSP();
     mRdp = new RDP();
     mBufVbo = new float[MAX_TRI_BUFFER * (32 * 3)];
+    mTextureCache.map.reserve(TEXTURE_CACHE_MAX_SIZE);
+    mTextureCache.free_texture_ids.reserve(TEXTURE_CACHE_MAX_SIZE);
+    mGetPixelDepthCached.reserve(512);
+    mCi8PaletteLutCache.reserve(16);
     mMpMatrixTransposeValid = false;
 }
 
@@ -977,6 +985,19 @@ void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
     mRapi->UploadTexture(mTexUploadBuffer, width, height);
 }
 
+static uint64_t HashCi8PaletteContent(const uint8_t* palette0, const uint8_t* palette1) {
+    uint64_t hash = 1469598103934665603ULL;
+    for (size_t i = 0; i < 256; i++) {
+        hash ^= palette0[i];
+        hash *= 1099511628211ULL;
+    }
+    for (size_t i = 0; i < 256; i++) {
+        hash ^= palette1[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
 void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
     const RawTexMetadata* metadata = &mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata;
     const uint8_t* addr =
@@ -988,20 +1009,35 @@ void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
         mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].full_image_line_size_bytes;
     uint32_t lineSizeBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes;
 
-    // Pre-expand the 256-entry RGBA5551 palette into RGBA8888 lookup table.
-    // This converts each palette entry once instead of per-pixel.
-    uint32_t lut[256];
-    for (int bank = 0; bank < 2; bank++) {
-        const uint8_t* pal = mRdp->palettes[bank];
-        for (int entry = 0; entry < 128; entry++) {
-            uint16_t col16 = (pal[entry * 2] << 8) | pal[entry * 2 + 1];
-            uint8_t a = col16 & 1;
-            uint8_t r = col16 >> 11;
-            uint8_t g = (col16 >> 6) & 0x1f;
-            uint8_t b = (col16 >> 1) & 0x1f;
-            lut[bank * 128 + entry] = SCALE_5_8(r) | (SCALE_5_8(g) << 8) | (SCALE_5_8(b) << 16) | ((a ? 255u : 0u) << 24);
+    const uint8_t* palette0 = mRdp->palettes[0];
+    const uint8_t* palette1 = mRdp->palettes[1];
+    const Ci8PaletteCacheKey lutKey = { palette0, palette1, HashCi8PaletteContent(palette0, palette1) };
+
+    auto lutIt = mCi8PaletteLutCache.find(lutKey);
+    if (lutIt == mCi8PaletteLutCache.end()) {
+        std::array<uint32_t, 256> lut{};
+        for (int bank = 0; bank < 2; bank++) {
+            const uint8_t* pal = mRdp->palettes[bank];
+            for (int entry = 0; entry < 128; entry++) {
+                uint16_t col16 = (pal[entry * 2] << 8) | pal[entry * 2 + 1];
+                uint8_t a = col16 & 1;
+                uint8_t r = col16 >> 11;
+                uint8_t g = (col16 >> 6) & 0x1f;
+                uint8_t b = (col16 >> 1) & 0x1f;
+                lut[bank * 128 + entry] =
+                    SCALE_5_8(r) | (SCALE_5_8(g) << 8) | (SCALE_5_8(b) << 16) | ((a ? 255u : 0u) << 24);
+            }
         }
+
+        // Keep this cache tiny and cheap; if it grows, reset it.
+        if (mCi8PaletteLutCache.size() > 32) {
+            mCi8PaletteLutCache.clear();
+        }
+
+        lutIt = mCi8PaletteLutCache.emplace(lutKey, lut).first;
     }
+
+    const std::array<uint32_t, 256>& lut = lutIt->second;
 
     uint32_t* dst = reinterpret_cast<uint32_t*>(mTexUploadBuffer);
     for (uint32_t i = 0, j = 0; i < sizeBytes; j += fullImageLineSizeBytes - lineSizeBytes) {
@@ -4895,26 +4931,30 @@ void Interpreter::AdjustPixelDepthCoordinates(float& x, float& y) {
     }
 }
 
+static DepthCoord QuantizeDepthCoord(float x, float y) {
+    return { static_cast<int32_t>(lroundf(x)), static_cast<int32_t>(lroundf(y)) };
+}
+
 void Interpreter::GetPixelDepthPrepare(float x, float y) {
     AdjustPixelDepthCoordinates(x, y);
-    mGetPixelDepthPending.emplace(x, y);
+    mGetPixelDepthPending.emplace(QuantizeDepthCoord(x, y));
 }
 
 uint16_t Interpreter::GetPixelDepth(float x, float y) {
     AdjustPixelDepthCoordinates(x, y);
+    const DepthCoord queryCoord = QuantizeDepthCoord(x, y);
 
-    if (auto it = mGetPixelDepthCached.find(std::make_pair(x, y)); it != mGetPixelDepthCached.end()) {
+    if (auto it = mGetPixelDepthCached.find(queryCoord); it != mGetPixelDepthCached.end()) {
         return it->second;
     }
 
-    mGetPixelDepthPending.emplace(x, y);
+    mGetPixelDepthPending.emplace(queryCoord);
 
-    std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> res =
-        mRapi->GetPixelDepth(mRendersToFb ? mGameFb : 0, mGetPixelDepthPending);
+    DepthCoordMap res = mRapi->GetPixelDepth(mRendersToFb ? mGameFb : 0, mGetPixelDepthPending);
     mGetPixelDepthCached.merge(res);
     mGetPixelDepthPending.clear();
 
-    return mGetPixelDepthCached.find(std::make_pair(x, y))->second;
+    return mGetPixelDepthCached.find(queryCoord)->second;
 }
 
 void gfx_push_current_dir(char* path) {

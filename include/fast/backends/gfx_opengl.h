@@ -25,6 +25,8 @@
 #include <SDL2/SDL_opengl.h>
 #endif
 namespace Fast {
+constexpr uint8_t OGL_VBO_RING_SIZE = 3;
+
 struct ShaderProgram {
     GLuint openglProgramId;
     uint8_t numInputs;
@@ -44,6 +46,9 @@ struct ShaderProgram {
     GLint grayscale_color_location;
     bool hasFog;
     bool hasGrayscale;
+#if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
+    GLuint vaos[OGL_VBO_RING_SIZE] = {};
+#endif
 };
 
 struct FramebufferOGL {
@@ -93,8 +98,7 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     void ClearFramebuffer(bool color, bool depth) override;
     void ReadFramebufferToCPU(int fbId, uint32_t width, uint32_t height, uint16_t* rgba16Buf) override;
     void ResolveMSAAColorBuffer(int fbIdTarger, int fbIdSrc) override;
-    std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
-    GetPixelDepth(int fb_id, const std::set<std::pair<float, float>>& coordinates) override;
+    DepthCoordMap GetPixelDepth(int fb_id, const DepthCoordSet& coordinates) override;
     void* GetFramebufferTextureId(int fbId) override;
     void SelectTextureFb(int fbId) override;
     void DeleteTexture(uint32_t texId) override;
@@ -118,17 +122,12 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     uint8_t mCurrentTile = 0;
 
     std::map<std::pair<uint64_t, uint32_t>, ShaderProgram> mShaderProgramPool;
-    ShaderProgram* mCurrentShaderProgram;
+    ShaderProgram* mCurrentShaderProgram = nullptr;
 
-    // VBO ring buffer: 3 VBOs rotating per frame to avoid GPU↔CPU sync stalls.
+    // VBO ring buffer: rotating VBOs avoid GPU↔CPU sync stalls.
     // While the GPU reads from VBO N-1 (or N-2), the CPU writes into VBO N.
-    static constexpr int VBO_RING_SIZE = 3;
-    GLuint mVboRing[VBO_RING_SIZE] = {};
+    GLuint mVboRing[OGL_VBO_RING_SIZE] = {};
     uint8_t mVboRingIndex = 0;
-
-#if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
-    GLuint mOpenglVao;
-#endif
 
     uint32_t mFrameCount = 0;
 
@@ -140,7 +139,8 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     GLint mMaxMsaaLevel = 1;
     GLuint mPixelDepthRb = 0;
     GLuint mPixelDepthFb = 0;
-    size_t mPixelDepthRbSize = 0;
+    uint32_t mPixelDepthRbWidth = 0;
+    uint32_t mPixelDepthRbHeight = 0;
 
     // Dirty-flag tracking for per-draw uniforms to skip redundant glUniform calls.
     GLint mLastPerDrawFiltering[2] = { -1, -1 };

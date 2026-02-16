@@ -1002,8 +1002,7 @@ FilteringMode GfxRenderingAPIDX11::GetTextureFilter() {
     return mCurrentFilterMode;
 }
 
-std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
-GfxRenderingAPIDX11::GetPixelDepth(int fb_id, const std::set<std::pair<float, float>>& coordinates) {
+DepthCoordMap GfxRenderingAPIDX11::GetPixelDepth(int fb_id, const DepthCoordSet& coordinates) {
     FramebufferDX11& fb = mFrameBuffers[fb_id];
     TextureData& td = mTextures[fb.texture_id];
 
@@ -1076,10 +1075,10 @@ GfxRenderingAPIDX11::GetPixelDepth(int fb_id, const std::set<std::pair<float, fl
     {
         size_t i = 0;
         for (const auto& coord : coordinates) {
-            coord_cb[i].x = coord.first;
+            coord_cb[i].x = coord.x;
             // We invert y because the gfx_pc assumes OpenGL coordinates (bottom-left corner is origin), while DX's
             // origin is top-left corner
-            coord_cb[i].y = td.height - 1 - coord.second;
+            coord_cb[i].y = td.height - 1 - coord.y;
             ++i;
         }
     }
@@ -1096,7 +1095,7 @@ GfxRenderingAPIDX11::GetPixelDepth(int fb_id, const std::set<std::pair<float, fl
 
     mContext->CopyResource(mDepthValueOutputBufferCopy.Get(), mDepthValueOutputBuffer.Get());
     ThrowIfFailed(mContext->Map(mDepthValueOutputBufferCopy.Get(), 0, D3D11_MAP_READ, 0, &ms));
-    std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> res;
+    DepthCoordMap res;
     {
         size_t i = 0;
         for (const auto& coord : coordinates) {

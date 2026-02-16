@@ -7,6 +7,8 @@
 
 #include <map>
 #include <unordered_map>
+#include <algorithm>
+#include <limits>
 
 #ifndef _LANGUAGE_C
 #define _LANGUAGE_C
@@ -85,18 +87,26 @@ void GfxRenderingAPIOGL::SetPerDrawUniforms() {
 }
 
 void GfxRenderingAPIOGL::UnloadShader(ShaderProgram* old_prg) {
+#if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
+    (void)old_prg;
+#else
     if (old_prg != nullptr) {
         for (unsigned int i = 0; i < old_prg->numAttribs; i++) {
             glDisableVertexAttribArray(old_prg->attribLocations[i]);
         }
     }
+#endif
 }
 
 void GfxRenderingAPIOGL::LoadShader(ShaderProgram* new_prg) {
     // if (!new_prg) return;
     mCurrentShaderProgram = new_prg;
     glUseProgram(new_prg->openglProgramId);
+#if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
+    glBindVertexArray(new_prg->vaos[mVboRingIndex]);
+#else
     VertexArraySetAttribs(new_prg);
+#endif
     SetUniforms(new_prg);
     // Invalidate per-draw uniform cache when switching shaders, since uniform locations change.
     mLastPerDrawFiltering[0] = mLastPerDrawFiltering[1] = -1;
@@ -492,6 +502,17 @@ ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, u
     prg->hasFog = cc_features.opt_fog;
     prg->hasGrayscale = cc_features.opt_grayscale;
 
+#if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
+    for (uint8_t ringIndex = 0; ringIndex < OGL_VBO_RING_SIZE; ringIndex++) {
+        glGenVertexArrays(1, &prg->vaos[ringIndex]);
+        glBindVertexArray(prg->vaos[ringIndex]);
+        glBindBuffer(GL_ARRAY_BUFFER, mVboRing[ringIndex]);
+        VertexArraySetAttribs(prg);
+    }
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, mVboRing[mVboRingIndex]);
+#endif
+
     LoadShader(prg);
 
     if (cc_features.usedTextures[0]) {
@@ -697,13 +718,8 @@ void GfxRenderingAPIOGL::Init() {
     glewInit();
 #endif
 
-    glGenBuffers(VBO_RING_SIZE, mVboRing);
+    glGenBuffers(OGL_VBO_RING_SIZE, mVboRing);
     glBindBuffer(GL_ARRAY_BUFFER, mVboRing[0]);
-
-#if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
-    glGenVertexArrays(1, &mOpenglVao);
-    glBindVertexArray(mOpenglVao);
-#endif
 
 #ifndef USE_OPENGLES // not supported on gles
     glEnable(GL_DEPTH_CLAMP);
@@ -723,7 +739,8 @@ void GfxRenderingAPIOGL::Init() {
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, mPixelDepthRb);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-    mPixelDepthRbSize = 1;
+    mPixelDepthRbWidth = 1;
+    mPixelDepthRbHeight = 1;
 
     glGetIntegerv(GL_MAX_SAMPLES, &mMaxMsaaLevel);
 }
@@ -736,8 +753,13 @@ void GfxRenderingAPIOGL::StartFrame() {
 
     // Rotate to the next VBO in the ring so the GPU can finish reading
     // the previous frame's buffer without stalling the CPU.
-    mVboRingIndex = (mVboRingIndex + 1) % VBO_RING_SIZE;
+    mVboRingIndex = (mVboRingIndex + 1) % OGL_VBO_RING_SIZE;
     glBindBuffer(GL_ARRAY_BUFFER, mVboRing[mVboRingIndex]);
+#if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
+    if (mCurrentShaderProgram != nullptr) {
+        glBindVertexArray(mCurrentShaderProgram->vaos[mVboRingIndex]);
+    }
+#endif
 }
 
 void GfxRenderingAPIOGL::EndFrame() {
@@ -958,71 +980,143 @@ void GfxRenderingAPIOGL::ReadFramebufferToCPU(int fb_id, uint32_t width, uint32_
     glBindFramebuffer(GL_FRAMEBUFFER, mFrameBuffers[mCurrentFrameBuffer].fbo);
 }
 
-std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
-GfxRenderingAPIOGL::GetPixelDepth(int fb_id, const std::set<std::pair<float, float>>& coordinates) {
-    std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> res;
+DepthCoordMap GfxRenderingAPIOGL::GetPixelDepth(int fb_id, const DepthCoordSet& coordinates) {
+    DepthCoordMap res;
+
+    if (fb_id < 0 || fb_id >= static_cast<int>(mFrameBuffers.size()) || coordinates.empty()) {
+        return res;
+    }
 
     FramebufferOGL& fb = mFrameBuffers[fb_id];
 
-    // When looking up one value and the framebuffer is single-sampled, we can read pixels directly
-    // Otherwise we need to blit first to a new buffer then read it
-    if (coordinates.size() == 1 && fb.msaa_level <= 1) {
-        uint32_t depth_stencil_value;
-        glBindFramebuffer(GL_FRAMEBUFFER, fb.fbo);
-        int x = coordinates.begin()->first;
-        int y = coordinates.begin()->second;
-#ifndef USE_OPENGLES // not supported on gles. Runs fine without it, but this may cause issues
-        glReadPixels(x, fb.invertY ? fb.height - y : y, 1, 1, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8,
-                     &depth_stencil_value);
-#endif
-        res.emplace(*coordinates.begin(), (depth_stencil_value >> 18) << 2);
-    } else {
-        if (mPixelDepthRbSize < coordinates.size()) {
-            // Resizing a renderbuffer seems broken with Intel's driver, so recreate one instead.
-            glBindFramebuffer(GL_FRAMEBUFFER, mPixelDepthFb);
-            glDeleteRenderbuffers(1, &mPixelDepthRb);
-            glGenRenderbuffers(1, &mPixelDepthRb);
-            glBindRenderbuffer(GL_RENDERBUFFER, mPixelDepthRb);
-            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, coordinates.size(), 1);
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, mPixelDepthRb);
-            glBindRenderbuffer(GL_RENDERBUFFER, 0);
+    const int maxX = std::max(0, static_cast<int>(fb.width) - 1);
+    const int maxY = std::max(0, static_cast<int>(fb.height) - 1);
 
-            mPixelDepthRbSize = coordinates.size();
+    auto ClampX = [maxX](int x) {
+        return std::clamp(x, 0, maxX);
+    };
+    auto ClampY = [maxY](int y) {
+        return std::clamp(y, 0, maxY);
+    };
+    auto ToReadY = [&](int y) {
+        int readY = fb.invertY ? static_cast<int>(fb.height) - y : y;
+        return ClampY(readY);
+    };
+
+    auto EnsurePixelDepthBuffer = [&](uint32_t width, uint32_t height) {
+        if (mPixelDepthRbWidth >= width && mPixelDepthRbHeight >= height) {
+            return;
         }
+
+        // Resizing a renderbuffer seems broken with Intel's driver, so recreate one instead.
+        glBindFramebuffer(GL_FRAMEBUFFER, mPixelDepthFb);
+        glDeleteRenderbuffers(1, &mPixelDepthRb);
+        glGenRenderbuffers(1, &mPixelDepthRb);
+        glBindRenderbuffer(GL_RENDERBUFFER, mPixelDepthRb);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, mPixelDepthRb);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+
+        mPixelDepthRbWidth = width;
+        mPixelDepthRbHeight = height;
+    };
+
+    const GLboolean scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+
+    // When looking up one value and the framebuffer is single-sampled, we can read pixels directly.
+    if (coordinates.size() == 1 && fb.msaa_level <= 1) {
+        uint32_t depth_stencil_value = 0;
+        const DepthCoord coord = *coordinates.begin();
+        glBindFramebuffer(GL_FRAMEBUFFER, fb.fbo);
+#ifndef USE_OPENGLES // not supported on gles. Runs fine without it, but this may cause issues
+        glReadPixels(ClampX(coord.x), ToReadY(coord.y), 1, 1, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, &depth_stencil_value);
+#endif
+        res.emplace(coord, (depth_stencil_value >> 18) << 2);
+    } else {
+        int minReadX = std::numeric_limits<int>::max();
+        int minReadY = std::numeric_limits<int>::max();
+        int maxReadX = std::numeric_limits<int>::min();
+        int maxReadY = std::numeric_limits<int>::min();
+        for (const auto& coord : coordinates) {
+            const int readX = ClampX(coord.x);
+            const int readY = ToReadY(coord.y);
+            minReadX = std::min(minReadX, readX);
+            maxReadX = std::max(maxReadX, readX);
+            minReadY = std::min(minReadY, readY);
+            maxReadY = std::max(maxReadY, readY);
+        }
+
+        const uint32_t rectWidth = static_cast<uint32_t>(maxReadX - minReadX + 1);
+        const uint32_t rectHeight = static_cast<uint32_t>(maxReadY - minReadY + 1);
+        const size_t rectArea = static_cast<size_t>(rectWidth) * static_cast<size_t>(rectHeight);
+
+        auto cvars = Ship::Context::GetInstance()->GetConsoleVariables();
+        const bool rectPathEnabled = cvars->GetInteger("gSwitchDepthRectReadback", 1) != 0;
+        const int areaFactor = std::max(1, cvars->GetInteger("gSwitchDepthRectAreaFactor", 8));
+        const int maxArea = std::max(1, cvars->GetInteger("gSwitchDepthRectMaxArea", 4096));
+
+        const bool useRectReadback = rectPathEnabled && rectArea <= static_cast<size_t>(maxArea) &&
+                                     rectArea <= coordinates.size() * static_cast<size_t>(areaFactor);
 
         glBindFramebuffer(GL_READ_FRAMEBUFFER, fb.fbo);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mPixelDepthFb);
-
         glDisable(GL_SCISSOR_TEST); // needed for the blit operation
 
-        {
+        if (useRectReadback) {
+            EnsurePixelDepthBuffer(rectWidth, rectHeight);
+
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, fb.fbo);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mPixelDepthFb);
+
+            glBlitFramebuffer(minReadX, minReadY, maxReadX + 1, maxReadY + 1, 0, 0, rectWidth, rectHeight,
+                              GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, GL_NEAREST);
+
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, mPixelDepthFb);
+            std::vector<uint32_t> depth_stencil_values(rectArea);
+#ifndef USE_OPENGLES // not supported on gles. Runs fine without it, but this may cause issues
+            glReadPixels(0, 0, rectWidth, rectHeight, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, depth_stencil_values.data());
+#endif
+            for (const auto& coord : coordinates) {
+                const int readX = ClampX(coord.x);
+                const int readY = ToReadY(coord.y);
+                const size_t offset = static_cast<size_t>(readY - minReadY) * rectWidth +
+                                      static_cast<size_t>(readX - minReadX);
+                res.emplace(coord, (depth_stencil_values[offset] >> 18) << 2);
+            }
+        } else {
+            EnsurePixelDepthBuffer(coordinates.size(), 1);
+
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, fb.fbo);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mPixelDepthFb);
+
             size_t i = 0;
             for (const auto& coord : coordinates) {
-                int x = coord.first;
-                int y = coord.second;
-                if (fb.invertY) {
-                    y = fb.height - y;
-                }
-                glBlitFramebuffer(x, y, x + 1, y + 1, i, 0, i + 1, 1, GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT,
-                                  GL_NEAREST);
+                const int readX = ClampX(coord.x);
+                const int readY = ToReadY(coord.y);
+                glBlitFramebuffer(readX, readY, readX + 1, readY + 1, i, 0, i + 1, 1,
+                                  GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, GL_NEAREST);
                 ++i;
             }
-        }
 
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, mPixelDepthFb);
-        std::vector<uint32_t> depth_stencil_values(coordinates.size());
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, mPixelDepthFb);
+            std::vector<uint32_t> depth_stencil_values(coordinates.size());
 #ifndef USE_OPENGLES // not supported on gles. Runs fine without it, but this may cause issues
-        glReadPixels(0, 0, coordinates.size(), 1, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, depth_stencil_values.data());
+            glReadPixels(0, 0, coordinates.size(), 1, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8,
+                         depth_stencil_values.data());
 #endif
-        {
-            size_t i = 0;
+            i = 0;
             for (const auto& coord : coordinates) {
                 res.emplace(coord, (depth_stencil_values[i++] >> 18) << 2);
             }
         }
     }
 
-    glBindFramebuffer(GL_FRAMEBUFFER, mCurrentFrameBuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, mFrameBuffers[mCurrentFrameBuffer].fbo);
+    if (scissorEnabled) {
+        glEnable(GL_SCISSOR_TEST);
+    } else {
+        glDisable(GL_SCISSOR_TEST);
+    }
 
     return res;
 }

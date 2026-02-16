@@ -9,6 +9,7 @@
 #include <vector>
 #include <stack>
 #include <string>
+#include <array>
 
 #include "fast/lus_gbi.h"
 #include "fast/types.h"
@@ -363,6 +364,24 @@ struct MaskedTextureEntry {
     uint8_t* replacementData;
 };
 
+struct Ci8PaletteCacheKey {
+    const uint8_t* palette0;
+    const uint8_t* palette1;
+    uint64_t contentHash;
+
+    bool operator==(const Ci8PaletteCacheKey&) const noexcept = default;
+
+    struct Hasher {
+        size_t operator()(const Ci8PaletteCacheKey& key) const noexcept {
+            size_t h = 0;
+            h ^= std::hash<const uint8_t*>{}(key.palette0) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+            h ^= std::hash<const uint8_t*>{}(key.palette1) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+            h ^= std::hash<uint64_t>{}(key.contentHash) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+};
+
 class Interpreter {
   public:
     Interpreter();
@@ -521,8 +540,9 @@ class Interpreter {
     int mGameFb{};             // game_framebuffer;
     int mGameFbMsaaResolved{}; // game_framebuffer_msaa_resolved;
 
-    std::set<std::pair<float, float>> mGetPixelDepthPending; // get_pixel_depth_pending;
-    std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> mGetPixelDepthCached; // get_pixel_depth_cached;
+    DepthCoordSet mGetPixelDepthPending; // get_pixel_depth_pending;
+    DepthCoordMap mGetPixelDepthCached; // get_pixel_depth_cached;
+    std::unordered_map<Ci8PaletteCacheKey, std::array<uint32_t, 256>, Ci8PaletteCacheKey::Hasher> mCi8PaletteLutCache;
     std::map<std::string, MaskedTextureEntry> mMaskedTextures;
 
     const std::unordered_map<Mtx*, MtxF>* mCurMtxReplacements;
