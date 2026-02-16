@@ -472,22 +472,14 @@ std::string Interpreter::GetBaseTexturePath(const std::string& path) {
 }
 
 void Interpreter::TextureCacheDelete(const uint8_t* origAddr) {
-    while (mTextureCache.map.bucket_count() > 0) {
-        TextureCacheKey key = { origAddr, { 0 }, 0, 0, 0 }; // bucket index only depends on the address
-        size_t bucket = mTextureCache.map.bucket(key);
-        bool again = false;
-        for (auto it = mTextureCache.map.begin(bucket); it != mTextureCache.map.end(bucket); ++it) {
-            if (it->first.texture_addr == origAddr) {
-                mTextureCache.lru.erase(it->second.lru_location);
-                mTextureCache.free_texture_ids.push_back(it->second.texture_id);
-                mTextureCache.map.erase(it->first);
-                again = true;
-                break;
-            }
+    for (auto it = mTextureCache.map.begin(); it != mTextureCache.map.end();) {
+        if (it->first.texture_addr == origAddr) {
+            mTextureCache.lru.erase(it->second.lru_location);
+            mTextureCache.free_texture_ids.push_back(it->second.texture_id);
+            it = mTextureCache.map.erase(it);
+            continue;
         }
-        if (!again) {
-            break;
-        }
+        ++it;
     }
 }
 
@@ -1140,18 +1132,23 @@ void Interpreter::ImportTexture(int i, int tile, bool importReplacement) {
     // Probe the cache to decide if we need to flush pending triangles.
     // On a hit for the same texture already bound, no flush is needed.
     // On a hit for a different texture or a miss, flush first.
-    auto probeIt = mTextureCache.map.find(key);
+    TextureCacheMap::iterator probeIt = mTextureCache.map.find(key);
     if (probeIt != mTextureCache.map.end()) {
         // Cache hit — check if this would actually change the bound texture.
         if (mRenderingState.mTextures[i] == nullptr ||
             probeIt->second.texture_id != mRenderingState.mTextures[i]->second.texture_id) {
             Flush();
         }
-    } else {
-        // Cache miss — will upload a new texture, must flush first.
-        Flush();
+
+        mRapi->SelectTexture(i, probeIt->second.texture_id);
+        mRenderingState.mTextures[i] = &*probeIt;
+        mTextureCache.lru.splice(mTextureCache.lru.end(), mTextureCache.lru,
+                                 probeIt->second.lru_location); // move to back
+        return;
     }
 
+    // Cache miss — will upload a new texture, must flush first.
+    Flush();
     if (TextureCacheLookup(i, key)) {
         return;
     }

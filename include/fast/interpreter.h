@@ -178,9 +178,20 @@ struct TextureCacheKey {
     bool operator==(const TextureCacheKey&) const noexcept = default;
 
     struct Hasher {
+        static inline size_t HashCombine(size_t seed, size_t value) {
+            return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+        }
+
         size_t operator()(const TextureCacheKey& key) const noexcept {
-            uintptr_t addr = (uintptr_t)key.texture_addr;
-            return (size_t)(addr ^ (addr >> 5));
+            size_t h = 0;
+            h = HashCombine(h, reinterpret_cast<size_t>(key.texture_addr));
+            h = HashCombine(h, reinterpret_cast<size_t>(key.palette_addrs[0]));
+            h = HashCombine(h, reinterpret_cast<size_t>(key.palette_addrs[1]));
+            h = HashCombine(h, static_cast<size_t>(key.fmt));
+            h = HashCombine(h, static_cast<size_t>(key.siz));
+            h = HashCombine(h, static_cast<size_t>(key.palette_index));
+            h = HashCombine(h, static_cast<size_t>(key.size_bytes));
+            return h;
         }
     };
 };
