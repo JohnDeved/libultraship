@@ -1137,6 +1137,21 @@ void Interpreter::ImportTexture(int i, int tile, bool importReplacement) {
         key = { origAddr, {}, fmt, siz, paletteIndex, origSizeBytes };
     }
 
+    // Probe the cache to decide if we need to flush pending triangles.
+    // On a hit for the same texture already bound, no flush is needed.
+    // On a hit for a different texture or a miss, flush first.
+    auto probeIt = mTextureCache.map.find(key);
+    if (probeIt != mTextureCache.map.end()) {
+        // Cache hit — check if this would actually change the bound texture.
+        if (mRenderingState.mTextures[i] == nullptr ||
+            probeIt->second.texture_id != mRenderingState.mTextures[i]->second.texture_id) {
+            Flush();
+        }
+    } else {
+        // Cache miss — will upload a new texture, must flush first.
+        Flush();
+    }
+
     if (TextureCacheLookup(i, key)) {
         return;
     }
@@ -1851,7 +1866,10 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         uint32_t tile = mRdp->first_tile_index + i;
         if (comb->usedTextures[i]) {
             if (mRdp->textures_changed[i]) {
-                Flush();
+                // Defer Flush() — ImportTexture may find a cache hit for the
+                // same texture already bound, in which case no flush is needed.
+                // Flush before ImportTexture only if ImportTexture would change
+                // the bound texture or upload new data.
                 ImportTexture(i, tile, false);
                 if (mRdp->loaded_texture[i].masked) {
                     ImportTextureMask(SHADER_FIRST_MASK_TEXTURE + i, tile);

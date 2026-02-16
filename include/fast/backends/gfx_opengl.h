@@ -112,15 +112,20 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
         uint16_t width;
         uint16_t height;
         uint16_t filtering;
-    } textures[1024];
+    } textures[1024] = {};
 
-    GLuint mCurrentTextureIds[SHADER_MAX_TEXTURES];
-    uint8_t mCurrentTile;
+    GLuint mCurrentTextureIds[SHADER_MAX_TEXTURES] = {};
+    uint8_t mCurrentTile = 0;
 
     std::map<std::pair<uint64_t, uint32_t>, ShaderProgram> mShaderProgramPool;
     ShaderProgram* mCurrentShaderProgram;
 
-    GLuint mOpenglVbo = 0;
+    // VBO ring buffer: 3 VBOs rotating per frame to avoid GPU↔CPU sync stalls.
+    // While the GPU reads from VBO N-1 (or N-2), the CPU writes into VBO N.
+    static constexpr int VBO_RING_SIZE = 3;
+    GLuint mVboRing[VBO_RING_SIZE] = {};
+    uint8_t mVboRingIndex = 0;
+
 #if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
     GLuint mOpenglVao;
 #endif

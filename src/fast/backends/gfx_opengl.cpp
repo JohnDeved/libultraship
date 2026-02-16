@@ -544,16 +544,38 @@ void GfxRenderingAPIOGL::DeleteTexture(uint32_t texID) {
 }
 
 void GfxRenderingAPIOGL::SelectTexture(int tile, GLuint texture_id) {
-    glActiveTexture(GL_TEXTURE0 + tile);
-    glBindTexture(GL_TEXTURE_2D, texture_id);
-    mCurrentTextureIds[tile] = texture_id;
-    mCurrentTile = tile;
+    // Skip redundant GL calls — the driver validates state even for no-ops.
+    bool tileChanged = (mCurrentTile != tile);
+    bool texChanged = (mCurrentTextureIds[tile] != texture_id);
+
+    if (!tileChanged && !texChanged) {
+        return;
+    }
+    if (tileChanged) {
+        glActiveTexture(GL_TEXTURE0 + tile);
+        mCurrentTile = tile;
+    }
+    if (texChanged) {
+        glBindTexture(GL_TEXTURE_2D, texture_id);
+        mCurrentTextureIds[tile] = texture_id;
+    }
 }
 
 void GfxRenderingAPIOGL::UploadTexture(const uint8_t* rgba32_buf, uint32_t width, uint32_t height) {
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba32_buf);
-    textures[mCurrentTextureIds[mCurrentTile]].width = width;
-    textures[mCurrentTextureIds[mCurrentTile]].height = height;
+    GLuint texId = mCurrentTextureIds[mCurrentTile];
+
+    // If the GPU texture already has the same dimensions, use glTexSubImage2D
+    // to avoid reallocating GPU storage. This is significantly cheaper on
+    // drivers like Mesa/Nouveau (Switch) where texture allocation is costly.
+    if (texId < 1024 && textures[texId].width == width && textures[texId].height == height) {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba32_buf);
+    } else {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba32_buf);
+        if (texId < 1024) {
+            textures[texId].width = width;
+            textures[texId].height = height;
+        }
+    }
 }
 
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
@@ -575,7 +597,11 @@ static uint32_t gfx_cm_to_opengl(uint32_t val) {
 }
 
 void GfxRenderingAPIOGL::SetSamplerParameters(int tile, bool linear_filter, uint32_t cms, uint32_t cmt) {
-    glActiveTexture(GL_TEXTURE0 + tile);
+    // Only switch active texture unit if needed.
+    if (mCurrentTile != tile) {
+        glActiveTexture(GL_TEXTURE0 + tile);
+        mCurrentTile = tile;
+    }
     const GLint filter = linear_filter && mCurrentFilterMode == FILTER_LINEAR ? GL_LINEAR : GL_NEAREST;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
@@ -671,8 +697,8 @@ void GfxRenderingAPIOGL::Init() {
     glewInit();
 #endif
 
-    glGenBuffers(1, &mOpenglVbo);
-    glBindBuffer(GL_ARRAY_BUFFER, mOpenglVbo);
+    glGenBuffers(VBO_RING_SIZE, mVboRing);
+    glBindBuffer(GL_ARRAY_BUFFER, mVboRing[0]);
 
 #if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
     glGenVertexArrays(1, &mOpenglVao);
@@ -707,6 +733,11 @@ void GfxRenderingAPIOGL::OnResize() {
 
 void GfxRenderingAPIOGL::StartFrame() {
     mFrameCount++;
+
+    // Rotate to the next VBO in the ring so the GPU can finish reading
+    // the previous frame's buffer without stalling the CPU.
+    mVboRingIndex = (mVboRingIndex + 1) % VBO_RING_SIZE;
+    glBindBuffer(GL_ARRAY_BUFFER, mVboRing[mVboRingIndex]);
 }
 
 void GfxRenderingAPIOGL::EndFrame() {
@@ -724,6 +755,8 @@ int GfxRenderingAPIOGL::CreateFramebuffer() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
+    // Invalidate texture bind cache — we bypassed SelectTexture.
+    mCurrentTextureIds[mCurrentTile] = 0;
 
     GLuint clrbufMsaa;
     glGenRenderbuffers(1, &clrbufMsaa);
@@ -765,6 +798,8 @@ void GfxRenderingAPIOGL::UpdateFramebufferParameters(int fb_id, uint32_t width, 
                 glBindTexture(GL_TEXTURE_2D, fb.clrbuf);
                 glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
                 glBindTexture(GL_TEXTURE_2D, 0);
+                // Invalidate texture bind cache — we bypassed SelectTexture.
+                mCurrentTextureIds[mCurrentTile] = 0;
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fb.clrbuf, 0);
             } else {
                 glBindRenderbuffer(GL_RENDERBUFFER, fb.clrbufMsaa);
@@ -842,6 +877,9 @@ void GfxRenderingAPIOGL::SelectTextureFb(int fb_id) {
     // glDisable(GL_DEPTH_TEST);
     glActiveTexture(GL_TEXTURE0 + 0);
     glBindTexture(GL_TEXTURE_2D, mFrameBuffers[fb_id].clrbuf);
+    // Invalidate bind cache for tile 0 since we bypassed SelectTexture.
+    mCurrentTextureIds[0] = 0;
+    mCurrentTile = 0;
 }
 
 void GfxRenderingAPIOGL::CopyFramebuffer(int fb_dst_id, int fb_src_id, int srcX0, int srcY0, int srcX1, int srcY1,
