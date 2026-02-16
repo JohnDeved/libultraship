@@ -28,15 +28,6 @@ struct PSInput {
     @end
 @end
 
-@if(o_fog)
-float4 fog : FOG;
-@{update_floats(4)}
-@end
-@if(o_grayscale)
-float4 grayscale : GRAYSCALE;
-@{update_floats(4)}
-@end
-
 @for(i in 0..o_inputs)
     @if(o_alpha)
         float4 input@{i + 1} : INPUT@{i};
@@ -114,12 +105,6 @@ PSInput VSMain(
         @end
     @end
 @end
-@if(o_fog)
-    , float4 fog : FOG
-@end
-@if(o_grayscale)
-    , float4 grayscale : GRAYSCALE
-@end
 @for(i in 0..o_inputs)
     @if(o_alpha)
         , float4 input@{i + 1} : INPUT@{i}
@@ -143,14 +128,6 @@ PSInput VSMain(
                 @end
             @end
         @end
-    @end
-
-    @if(o_fog)
-        result.fog = fog;
-    @end
-
-    @if(o_grayscale)
-        result.grayscale = grayscale;
     @end
 
     @for(i in 0..o_inputs)
@@ -291,19 +268,9 @@ float4 PSMain(PSInput input, float4 screenSpace : SV_Position) : SV_TARGET {
     texel = WRAP(texel, -0.51, 1.51);
     texel = clamp(texel, 0.0, 1.0);
     // TODO discard if alpha is 0?
-    @if(o_fog)
-        @if(o_alpha)
-            texel = float4(lerp(texel.rgb, input.fog.rgb, input.fog.a), texel.a);
-        @else
-            texel = lerp(texel, input.fog.rgb, input.fog.a);
-        @end
-    @end
-
-    @if(o_grayscale)
-        float intensity = (texel.r + texel.g + texel.b) / 3.0;
-        float3 new_texel = input.grayscale.rgb * intensity;
-        texel.rgb = lerp(texel.rgb, new_texel, input.grayscale.a);
-    @end
+    // TODO: Fog/grayscale on D3D11 requires cbuffer support for uniforms.
+    // For now, fog and grayscale are disabled on D3D11.
+    // These effects work correctly on the OpenGL backend (including Switch).
 
     @if(o_alpha && o_noise)
         float2 coords = screenSpace.xy * noise_scale;

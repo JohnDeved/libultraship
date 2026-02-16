@@ -87,6 +87,8 @@ class GfxRenderingAPIDX11 final : public GfxRenderingAPI {
     void SetScissor(int x, int y, int width, int height) override;
     void SetUseAlpha(bool useAlpha) override;
     void DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) override;
+    void SetFogParams(float r, float g, float b, float mul, float offset) override;
+    void SetGrayscaleColor(float r, float g, float b, float a) override;
     void Init() override;
     void OnResize() override;
     void StartFrame() override;
@@ -102,8 +104,7 @@ class GfxRenderingAPIDX11 final : public GfxRenderingAPI {
     void ClearFramebuffer(bool color, bool depth) override;
     void ReadFramebufferToCPU(int fbId, uint32_t width, uint32_t height, uint16_t* rgba16Buf) override;
     void ResolveMSAAColorBuffer(int fbIdTarger, int fbIdSrc) override;
-    std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
-    GetPixelDepth(int fb_id, const std::set<std::pair<float, float>>& coordinates) override;
+    DepthCoordMap GetPixelDepth(int fb_id, const DepthCoordSet& coordinates) override;
     void* GetFramebufferTextureId(int fbId) override;
     void SelectTextureFb(int fbId) override;
     void DeleteTexture(uint32_t texId) override;

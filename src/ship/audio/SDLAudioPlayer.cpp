@@ -54,7 +54,13 @@ int SDLAudioPlayer::Buffered() {
 }
 
 void SDLAudioPlayer::DoPlay(const uint8_t* buf, size_t len) {
+#if defined(__SWITCH__)
+    // Switch's slower CPU can cause audio underruns; allow a deeper buffer
+    // to absorb scheduling jitter without adding perceptible latency.
+    if (Buffered() < 8000) {
+#else
     if (Buffered() < 6000) {
+#endif
         // Don't fill the audio buffer too much in case this happens
         SDL_QueueAudio(mDevice, buf, len);
     }

@@ -9,6 +9,7 @@
 #include <vector>
 #include <stack>
 #include <string>
+#include <array>
 
 #include "fast/lus_gbi.h"
 #include "fast/types.h"
@@ -352,6 +353,24 @@ struct MaskedTextureEntry {
     uint8_t* replacementData;
 };
 
+struct Ci8PaletteCacheKey {
+    const uint8_t* palette0;
+    const uint8_t* palette1;
+    uint64_t contentHash;
+
+    bool operator==(const Ci8PaletteCacheKey&) const noexcept = default;
+
+    struct Hasher {
+        size_t operator()(const Ci8PaletteCacheKey& key) const noexcept {
+            size_t h = 0;
+            h ^= std::hash<const uint8_t*>{}(key.palette0) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+            h ^= std::hash<const uint8_t*>{}(key.palette1) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+            h ^= std::hash<uint64_t>{}(key.contentHash) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+};
+
 class Interpreter {
   public:
     Interpreter();
@@ -471,6 +490,8 @@ class Interpreter {
     static void TransposedMatrixMul(float res[3], const float a[3], const float b[4][4]);
     static void MatrixMul(float res[4][4], const float a[4][4], const float b[4][4]);
 
+    void UpdateMpMatrixTranspose();
+
     RSP* mRsp;
     RDP* mRdp;
     RenderingState mRenderingState{};
@@ -508,8 +529,9 @@ class Interpreter {
     int mGameFb{};             // game_framebuffer;
     int mGameFbMsaaResolved{}; // game_framebuffer_msaa_resolved;
 
-    std::set<std::pair<float, float>> mGetPixelDepthPending; // get_pixel_depth_pending;
-    std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> mGetPixelDepthCached; // get_pixel_depth_cached;
+    DepthCoordSet mGetPixelDepthPending; // get_pixel_depth_pending;
+    DepthCoordMap mGetPixelDepthCached; // get_pixel_depth_cached;
+    std::unordered_map<Ci8PaletteCacheKey, std::array<uint32_t, 256>, Ci8PaletteCacheKey::Hasher> mCi8PaletteLutCache;
     std::map<std::string, MaskedTextureEntry> mMaskedTextures;
 
     const std::unordered_map<Mtx*, MtxF>* mCurMtxReplacements;
@@ -517,6 +539,12 @@ class Interpreter {
     std::vector<std::string> shader_ids;
     int mInterpolationIndex;
     int mInterpolationIndexTarget;
+
+    // Cached transpose of mRsp->MP_matrix.
+    // GfxSpVertex's hot path uses MP_matrix in a transposed access pattern; keeping a transposed copy
+    // avoids strided loads and enables efficient NEON dot products on Switch.
+    float mMpMatrixTranspose[4][4]{};
+    bool mMpMatrixTransposeValid{};
 };
 
 void gfx_set_target_ucode(UcodeHandlers ucode);

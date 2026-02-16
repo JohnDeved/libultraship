@@ -381,20 +381,6 @@ struct ShaderProgram* GfxRenderingAPIDX11::CreateAndLoadNewShader(uint64_t shade
             }
         }
     }
-    if (cc_features.opt_fog) {
-        ied[ied_index++] = {
-            "FOG", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0
-        };
-    }
-    if (cc_features.opt_grayscale) {
-        ied[ied_index++] = { "GRAYSCALE",
-                             0,
-                             DXGI_FORMAT_R32G32B32A32_FLOAT,
-                             0,
-                             D3D11_APPEND_ALIGNED_ELEMENT,
-                             D3D11_INPUT_PER_VERTEX_DATA,
-                             0 };
-    }
     for (unsigned int i = 0; i < cc_features.numInputs; i++) {
         DXGI_FORMAT format = cc_features.opt_alpha ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R32G32B32_FLOAT;
         ied[ied_index++] = { "INPUT", i, format, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 };
@@ -569,6 +555,12 @@ void GfxRenderingAPIDX11::SetScissor(int x, int y, int width, int height) {
 
 void GfxRenderingAPIDX11::SetUseAlpha(bool use_alpha) {
     // Already part of the pipeline state from shader info
+}
+
+void GfxRenderingAPIDX11::SetFogParams(float r, float g, float b, float mul, float offset) {
+}
+
+void GfxRenderingAPIDX11::SetGrayscaleColor(float r, float g, float b, float a) {
 }
 
 void GfxRenderingAPIDX11::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
@@ -1010,8 +1002,7 @@ FilteringMode GfxRenderingAPIDX11::GetTextureFilter() {
     return mCurrentFilterMode;
 }
 
-std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
-GfxRenderingAPIDX11::GetPixelDepth(int fb_id, const std::set<std::pair<float, float>>& coordinates) {
+DepthCoordMap GfxRenderingAPIDX11::GetPixelDepth(int fb_id, const DepthCoordSet& coordinates) {
     FramebufferDX11& fb = mFrameBuffers[fb_id];
     TextureData& td = mTextures[fb.texture_id];
 
@@ -1084,10 +1075,10 @@ GfxRenderingAPIDX11::GetPixelDepth(int fb_id, const std::set<std::pair<float, fl
     {
         size_t i = 0;
         for (const auto& coord : coordinates) {
-            coord_cb[i].x = coord.first;
+            coord_cb[i].x = coord.x;
             // We invert y because the gfx_pc assumes OpenGL coordinates (bottom-left corner is origin), while DX's
             // origin is top-left corner
-            coord_cb[i].y = td.height - 1 - coord.second;
+            coord_cb[i].y = td.height - 1 - coord.y;
             ++i;
         }
     }
@@ -1104,7 +1095,7 @@ GfxRenderingAPIDX11::GetPixelDepth(int fb_id, const std::set<std::pair<float, fl
 
     mContext->CopyResource(mDepthValueOutputBufferCopy.Get(), mDepthValueOutputBuffer.Get());
     ThrowIfFailed(mContext->Map(mDepthValueOutputBufferCopy.Get(), 0, D3D11_MAP_READ, 0, &ms));
-    std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> res;
+    DepthCoordMap res;
     {
         size_t i = 0;
         for (const auto& coord : coordinates) {

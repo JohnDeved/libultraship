@@ -9,6 +9,10 @@
 #include "ship/config/ConsoleVariable.h"
 #include "ship/Context.h"
 
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
+
 namespace Ship {
 
 ResourceFilter::ResourceFilter(const std::list<std::string>& includeMasks, const std::list<std::string>& excludeMasks,
@@ -51,12 +55,27 @@ void ResourceManager::Init(const std::vector<std::string>& archivePaths,
     mArchiveManager = std::make_shared<ArchiveManager>();
     GetArchiveManager()->Init(archivePaths, validHashes);
 #if defined(__SWITCH__)
-    size_t threadCount = 1;
+    // Switch has limited CPU/thread budget, but a single loader thread makes scene/asset loads noticeably slower.
+    // Default to 2 (good throughput without starving the main thread), and clamp to a conservative maximum.
+    int32_t configuredThreadCount = 2;
+    if (auto cvars = Ship::Context::GetInstance()->GetConsoleVariables(); cvars != nullptr) {
+        configuredThreadCount = cvars->GetInteger(CVAR_RESOURCE_THREAD_COUNT, configuredThreadCount);
+    }
+    size_t threadCount = (size_t)std::clamp(configuredThreadCount, 1, 3);
 #else
     // the extra `- 1` is because we reserve an extra thread for spdlog
     size_t threadCount = std::max(1, (int32_t)(std::thread::hardware_concurrency() - reservedThreadCount - 1));
 #endif
+#if defined(__SWITCH__)
+    // Pin resource-loader threads to cores 1 & 2, keeping them off the
+    // main/render core (0).  The OS schedules freely across both cores;
+    // preferred_core = -1 means no single preferred core.
+    mThreadPool = std::make_shared<BS::thread_pool>(threadCount, []() {
+        svcSetThreadCoreMask(CUR_THREAD_HANDLE, -1, (1U << 1) | (1U << 2));
+    });
+#else
     mThreadPool = std::make_shared<BS::thread_pool>(threadCount);
+#endif
 
     if (!IsLoaded()) {
         // Nothing ever unpauses the thread pool since nothing will ever try to load the archive again.

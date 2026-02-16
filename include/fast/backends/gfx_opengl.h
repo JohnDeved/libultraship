@@ -25,6 +25,8 @@
 #include <SDL2/SDL_opengl.h>
 #endif
 namespace Fast {
+constexpr uint8_t OGL_VBO_RING_SIZE = 3;
+
 struct ShaderProgram {
     GLuint openglProgramId;
     uint8_t numInputs;
@@ -38,6 +40,15 @@ struct ShaderProgram {
     GLint texture_width_location;
     GLint texture_height_location;
     GLint texture_filtering_location;
+    GLint fog_color_location;
+    GLint fog_mul_location;
+    GLint fog_offset_location;
+    GLint grayscale_color_location;
+    bool hasFog;
+    bool hasGrayscale;
+#if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
+    GLuint vaos[OGL_VBO_RING_SIZE] = {};
+#endif
 };
 
 struct FramebufferOGL {
@@ -70,6 +81,8 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     void SetScissor(int x, int y, int width, int height) override;
     void SetUseAlpha(bool useAlpha) override;
     void DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) override;
+    void SetFogParams(float r, float g, float b, float mul, float offset) override;
+    void SetGrayscaleColor(float r, float g, float b, float a) override;
     void Init() override;
     void OnResize() override;
     void StartFrame() override;
@@ -85,8 +98,7 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     void ClearFramebuffer(bool color, bool depth) override;
     void ReadFramebufferToCPU(int fbId, uint32_t width, uint32_t height, uint16_t* rgba16Buf) override;
     void ResolveMSAAColorBuffer(int fbIdTarger, int fbIdSrc) override;
-    std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
-    GetPixelDepth(int fb_id, const std::set<std::pair<float, float>>& coordinates) override;
+    DepthCoordMap GetPixelDepth(int fb_id, const DepthCoordSet& coordinates) override;
     void* GetFramebufferTextureId(int fbId) override;
     void SelectTextureFb(int fbId) override;
     void DeleteTexture(uint32_t texId) override;
@@ -104,18 +116,18 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
         uint16_t width;
         uint16_t height;
         uint16_t filtering;
-    } textures[1024];
+    } textures[1024] = {};
 
-    GLuint mCurrentTextureIds[SHADER_MAX_TEXTURES];
-    uint8_t mCurrentTile;
+    GLuint mCurrentTextureIds[SHADER_MAX_TEXTURES] = {};
+    uint8_t mCurrentTile = 0;
 
     std::map<std::pair<uint64_t, uint32_t>, ShaderProgram> mShaderProgramPool;
-    ShaderProgram* mCurrentShaderProgram;
+    ShaderProgram* mCurrentShaderProgram = nullptr;
 
-    GLuint mOpenglVbo = 0;
-#if defined(__APPLE__) || defined(USE_OPENGLES)
-    GLuint mOpenglVao;
-#endif
+    // VBO ring buffer: rotating VBOs avoid GPU↔CPU sync stalls.
+    // While the GPU reads from VBO N-1 (or N-2), the CPU writes into VBO N.
+    GLuint mVboRing[OGL_VBO_RING_SIZE] = {};
+    uint8_t mVboRingIndex = 0;
 
     uint32_t mFrameCount = 0;
 
@@ -127,7 +139,19 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     GLint mMaxMsaaLevel = 1;
     GLuint mPixelDepthRb = 0;
     GLuint mPixelDepthFb = 0;
-    size_t mPixelDepthRbSize = 0;
+    uint32_t mPixelDepthRbWidth = 0;
+    uint32_t mPixelDepthRbHeight = 0;
+
+    // Dirty-flag tracking for per-draw uniforms to skip redundant glUniform calls.
+    GLint mLastPerDrawFiltering[2] = { -1, -1 };
+    GLint mLastPerDrawWidth[2] = { -1, -1 };
+    GLint mLastPerDrawHeight[2] = { -1, -1 };
+
+    // Fog/grayscale uniform dirty tracking
+    float mLastFogColor[3] = { -1.0f, -1.0f, -1.0f };
+    float mLastFogMul = -99999.0f;
+    float mLastFogOffset = -99999.0f;
+    float mLastGrayscaleColor[4] = { -1.0f, -1.0f, -1.0f, -1.0f };
 };
 
 } // namespace Fast

@@ -365,3 +365,4 @@ extern/nlohmann-json/*_jsonConfig*
 *.xcworkspace
 *.xcsettings
 build*
+_codeql_detected_source_root

@@ -412,6 +412,12 @@ void GfxRenderingAPIMetal::SetUseAlpha(bool use_alpha) {
     // Already part of the pipeline state from shader info
 }
 
+void GfxRenderingAPIMetal::SetFogParams(float r, float g, float b, float mul, float offset) {
+}
+
+void GfxRenderingAPIMetal::SetGrayscaleColor(float r, float g, float b, float a) {
+}
+
 void GfxRenderingAPIMetal::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
     NS::AutoreleasePool* autorelease_pool = NS::AutoreleasePool::alloc()->init();
 
@@ -924,8 +930,7 @@ void GfxRenderingAPIMetal::ResolveMSAAColorBuffer(int fb_id_target, int fb_id_so
     }
 }
 
-std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
-GfxRenderingAPIMetal::GetPixelDepth(int fb_id, const std::set<std::pair<float, float>>& coordinates) {
+DepthCoordMap GfxRenderingAPIMetal::GetPixelDepth(int fb_id, const DepthCoordSet& coordinates) {
     auto framebuffer = mFramebuffers[fb_id];
 
     if (coordinates.size() > mCoordBufferSize) {
@@ -946,8 +951,8 @@ GfxRenderingAPIMetal::GetPixelDepth(int fb_id, const std::set<std::pair<float, f
     // map coordinates to right y axis
     size_t i = 0;
     for (const auto& coord : coordinates) {
-        mCoordUniforms.coords[i].x = coord.first;
-        mCoordUniforms.coords[i].y = framebuffer.mDepthTexture->height() - 1 - coord.second;
+        mCoordUniforms.coords[i].x = coord.x;
+        mCoordUniforms.coords[i].y = framebuffer.mDepthTexture->height() - 1 - coord.y;
         ++i;
     }
 
@@ -986,7 +991,7 @@ GfxRenderingAPIMetal::GetPixelDepth(int fb_id, const std::set<std::pair<float, f
     // Now the depth values can be accessed in the buffer.
     float* depth_values = (float*)mDepthValueOutputBuffer->contents();
 
-    std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> res;
+    DepthCoordMap res;
     {
         size_t i = 0;
         for (const auto& coord : coordinates) {
