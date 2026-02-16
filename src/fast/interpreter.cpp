@@ -612,17 +612,69 @@ void Interpreter::ImportTextureIA4(int tile, bool importReplacement) {
     uint32_t lineSizeBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes;
     SUPPORT_CHECK(fullImageLineSizeBytes == lineSizeBytes);
 
-    for (uint32_t i = 0; i < sizeBytes * 2; i++) {
+    uint32_t numPixels = sizeBytes * 2;
+    uint32_t i = 0;
+
+#if defined(__ARM_NEON)
+    // Process 16 input bytes = 32 pixels at a time.
+    // Each byte holds two 4-bit pixels: [hi=pixel0, lo=pixel1].
+    // Each nibble is IIIA (3-bit intensity, 1-bit alpha).
+    const uint8x16_t mask_lo = vdupq_n_u8(0x0f);
+    const uint8x16_t scale = vdupq_n_u8(0x24); // SCALE_3_8
+
+    for (uint32_t byteIdx = 0; byteIdx + 16 <= sizeBytes; byteIdx += 16, i += 32) {
+        uint8x16_t src = vld1q_u8(addr + byteIdx);
+
+        // Extract high nibble (pixel 0 of each pair) and low nibble (pixel 1)
+        uint8x16_t hi_nib = vshrq_n_u8(src, 4);
+        uint8x16_t lo_nib = vandq_u8(src, mask_lo);
+
+        // Extract intensity (top 3 bits of nibble) and alpha (bottom bit)
+        uint8x16_t hi_i = vshrq_n_u8(hi_nib, 1);
+        uint8x16_t hi_a = vandq_u8(hi_nib, vdupq_n_u8(1));
+        uint8x16_t lo_i = vshrq_n_u8(lo_nib, 1);
+        uint8x16_t lo_a = vandq_u8(lo_nib, vdupq_n_u8(1));
+
+        // Scale intensity: SCALE_3_8(v) = v * 0x24
+        uint8x16_t hi_rgb = vmulq_u8(hi_i, scale);
+        uint8x16_t lo_rgb = vmulq_u8(lo_i, scale);
+
+        // Alpha: 0 → 0, 1 → 255 (negate)
+        uint8x16_t hi_alpha = vsubq_u8(vdupq_n_u8(0), hi_a);
+        uint8x16_t lo_alpha = vsubq_u8(vdupq_n_u8(0), lo_a);
+
+        // Interleave: we need pixel0, pixel1, pixel0, pixel1, ...
+        // Use vzip to interleave the high/low pixel pairs: [h0,l0, h1,l1, h2,l2, ...]
+        uint8x16x2_t rgb_z = vzipq_u8(hi_rgb, lo_rgb);
+        uint8x16x2_t alpha_z = vzipq_u8(hi_alpha, lo_alpha);
+
+        // First 16 pixels (from rgb_z.val[0] and alpha_z.val[0])
+        uint8x16x4_t rgba0;
+        rgba0.val[0] = rgb_z.val[0];
+        rgba0.val[1] = rgb_z.val[0];
+        rgba0.val[2] = rgb_z.val[0];
+        rgba0.val[3] = alpha_z.val[0];
+        vst4q_u8(mTexUploadBuffer + i * 4, rgba0);
+
+        // Next 16 pixels (from rgb_z.val[1] and alpha_z.val[1])
+        uint8x16x4_t rgba1;
+        rgba1.val[0] = rgb_z.val[1];
+        rgba1.val[1] = rgb_z.val[1];
+        rgba1.val[2] = rgb_z.val[1];
+        rgba1.val[3] = alpha_z.val[1];
+        vst4q_u8(mTexUploadBuffer + (i + 16) * 4, rgba1);
+    }
+#endif
+
+    // Scalar tail
+    for (; i < numPixels; i++) {
         uint8_t byte = addr[i / 2];
         uint8_t part = (byte >> (4 - (i % 2) * 4)) & 0xf;
         uint8_t intensity = part >> 1;
         uint8_t alpha = part & 1;
-        uint8_t r = intensity;
-        uint8_t g = intensity;
-        uint8_t b = intensity;
-        mTexUploadBuffer[4 * i + 0] = SCALE_3_8(r);
-        mTexUploadBuffer[4 * i + 1] = SCALE_3_8(g);
-        mTexUploadBuffer[4 * i + 2] = SCALE_3_8(b);
+        mTexUploadBuffer[4 * i + 0] = SCALE_3_8(intensity);
+        mTexUploadBuffer[4 * i + 1] = SCALE_3_8(intensity);
+        mTexUploadBuffer[4 * i + 2] = SCALE_3_8(intensity);
         mTexUploadBuffer[4 * i + 3] = alpha ? 255 : 0;
     }
 
@@ -858,18 +910,22 @@ void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
 
     SUPPORT_CHECK(fullImageLineSizeBytes == lineSizeBytes);
 
-    for (uint32_t i = 0; i < sizeBytes * 2; i++) {
-        uint8_t byte = addr[i / 2];
-        uint8_t idx = (byte >> (4 - (i % 2) * 4)) & 0xf;
-        uint16_t col16 = (palette[idx * 2] << 8) | palette[idx * 2 + 1]; // Big endian load
+    // Pre-expand the 16-entry RGBA5551 palette into RGBA8888 lookup table.
+    uint32_t lut[16];
+    for (int idx = 0; idx < 16; idx++) {
+        uint16_t col16 = (palette[idx * 2] << 8) | palette[idx * 2 + 1];
         uint8_t a = col16 & 1;
         uint8_t r = col16 >> 11;
         uint8_t g = (col16 >> 6) & 0x1f;
         uint8_t b = (col16 >> 1) & 0x1f;
-        mTexUploadBuffer[4 * i + 0] = SCALE_5_8(r);
-        mTexUploadBuffer[4 * i + 1] = SCALE_5_8(g);
-        mTexUploadBuffer[4 * i + 2] = SCALE_5_8(b);
-        mTexUploadBuffer[4 * i + 3] = a ? 255 : 0;
+        lut[idx] = SCALE_5_8(r) | (SCALE_5_8(g) << 8) | (SCALE_5_8(b) << 16) | ((a ? 255u : 0u) << 24);
+    }
+
+    uint32_t* dst = reinterpret_cast<uint32_t*>(mTexUploadBuffer);
+    for (uint32_t i = 0; i < sizeBytes; i++) {
+        uint8_t byte = addr[i];
+        dst[i * 2 + 0] = lut[byte >> 4];
+        dst[i * 2 + 1] = lut[byte & 0xf];
     }
 
     uint32_t resultLineSizeBytes = mRdp->texture_tile[tile].line_size_bytes;
@@ -894,19 +950,23 @@ void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
         mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].full_image_line_size_bytes;
     uint32_t lineSizeBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes;
 
+    // Pre-expand the 256-entry RGBA5551 palette into RGBA8888 lookup table.
+    // This converts each palette entry once instead of per-pixel.
+    uint32_t lut[256];
+    for (int idx = 0; idx < 256; idx++) {
+        uint16_t col16 = (mRdp->palettes[idx / 128][(idx % 128) * 2] << 8) |
+                         mRdp->palettes[idx / 128][(idx % 128) * 2 + 1];
+        uint8_t a = col16 & 1;
+        uint8_t r = col16 >> 11;
+        uint8_t g = (col16 >> 6) & 0x1f;
+        uint8_t b = (col16 >> 1) & 0x1f;
+        lut[idx] = SCALE_5_8(r) | (SCALE_5_8(g) << 8) | (SCALE_5_8(b) << 16) | ((a ? 255u : 0u) << 24);
+    }
+
+    uint32_t* dst = reinterpret_cast<uint32_t*>(mTexUploadBuffer);
     for (uint32_t i = 0, j = 0; i < sizeBytes; j += fullImageLineSizeBytes - lineSizeBytes) {
         for (uint32_t k = 0; k < lineSizeBytes; i++, k++, j++) {
-            uint8_t idx = addr[j];
-            uint16_t col16 = (mRdp->palettes[idx / 128][(idx % 128) * 2] << 8) |
-                             mRdp->palettes[idx / 128][(idx % 128) * 2 + 1]; // Big endian load
-            uint8_t a = col16 & 1;
-            uint8_t r = col16 >> 11;
-            uint8_t g = (col16 >> 6) & 0x1f;
-            uint8_t b = (col16 >> 1) & 0x1f;
-            mTexUploadBuffer[4 * i + 0] = SCALE_5_8(r);
-            mTexUploadBuffer[4 * i + 1] = SCALE_5_8(g);
-            mTexUploadBuffer[4 * i + 2] = SCALE_5_8(b);
-            mTexUploadBuffer[4 * i + 3] = a ? 255 : 0;
+            dst[i] = lut[addr[j]];
         }
     }
 
