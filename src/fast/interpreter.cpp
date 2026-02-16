@@ -66,7 +66,13 @@ std::stack<std::string> currentDir;
 #define RATIO_Y(activeFb, dims) \
     ((mFbActive ? activeFb->second.applied_height : dims.height) / (2.0f * HALF_SCREEN_HEIGHT(activeFb)))
 
+#if defined(__SWITCH__)
+// Switch's ARM Cortex-A57 is slow at texture format conversion; a larger cache
+// keeps more decoded textures resident and avoids costly re-imports.
+#define TEXTURE_CACHE_MAX_SIZE 1024
+#else
 #define TEXTURE_CACHE_MAX_SIZE 500
+#endif
 
 namespace Fast {
 
@@ -1037,16 +1043,39 @@ void Interpreter::ImportTextureMask(int i, int tile) {
 }
 
 void Interpreter::NormalizeVector(float v[3]) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    float32x2_t xy = vld1_f32(v);
+    float z = v[2];
+    // dot = x*x + y*y + z*z
+    float32x2_t sq_xy = vmul_f32(xy, xy);                // [x², y²]
+    float32x2_t sum = vpadd_f32(sq_xy, sq_xy);           // [x²+y², x²+y²]
+    float32x2_t dot = vadd_f32(sum, vdup_n_f32(z * z));  // [x²+y²+z², ...]
+    // fast reciprocal-sqrt with one Newton-Raphson refinement
+    float32x2_t rsqrt = vrsqrte_f32(dot);
+    rsqrt = vmul_f32(rsqrt, vrsqrts_f32(vmul_f32(rsqrt, rsqrt), dot));
+    vst1_f32(v, vmul_f32(xy, rsqrt));
+    v[2] = z * vget_lane_f32(rsqrt, 0);
+#else
     float s = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
     v[0] /= s;
     v[1] /= s;
     v[2] /= s;
+#endif
 }
 
 void Interpreter::TransposedMatrixMul(float res[3], const float a[3], const float b[4][4]) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // res[i] = dot(a, b[i][:3]) — dot product of a with each row's first 3 elements.
+    // Zero the 4th lane so the unused b[i][3] column doesn't affect the sum.
+    float32x4_t va = { a[0], a[1], a[2], 0.0f };
+    res[0] = vaddvq_f32(vmulq_f32(va, vld1q_f32(b[0])));
+    res[1] = vaddvq_f32(vmulq_f32(va, vld1q_f32(b[1])));
+    res[2] = vaddvq_f32(vmulq_f32(va, vld1q_f32(b[2])));
+#else
     res[0] = a[0] * b[0][0] + a[1] * b[0][1] + a[2] * b[0][2];
     res[1] = a[0] * b[1][0] + a[1] * b[1][1] + a[2] * b[1][2];
     res[2] = a[0] * b[2][0] + a[1] * b[2][1] + a[2] * b[2][2];
+#endif
 }
 
 void Interpreter::MatrixMul(float res[4][4], const float a[4][4], const float b[4][4]) {
